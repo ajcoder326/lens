@@ -1,0 +1,39 @@
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:kspDebugKotlin
+
+> Task :app:compileDebugKotlin
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/player/PlaybackService.kt:25:19 Unnecessary safe call on a non-null receiver of type Player
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/runtime/JSApis.kt:168:53 Type mismatch: inferred type is Element? but Element was expected
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/runtime/JSApis.kt:178:53 Type mismatch: inferred type is Element? but Element was expected
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/ExtensionsScreen.kt:36:44 'ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/InfoScreen.kt:49:44 'ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/InfoScreen.kt:278:40 'List: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.List
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/PlayerScreen.kt:40:9 Variable 'controlsTimeoutJob' is never used
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/PlayerScreen.kt:46:38 'setter for systemUiVisibility: Int' is deprecated. Deprecated in Java
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/PlayerScreen.kt:47:18 'SYSTEM_UI_FLAG_FULLSCREEN: Int' is deprecated. Deprecated in Java
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/PlayerScreen.kt:48:18 'SYSTEM_UI_FLAG_HIDE_NAVIGATION: Int' is deprecated. Deprecated in Java
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/PlayerScreen.kt:49:18 'SYSTEM_UI_FLAG_IMMERSIVE_STICKY: Int' is deprecated. Deprecated in Java
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/PlayerScreen.kt:168:5 Parameter 'bufferedPosition' is never used
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/PlayerScreen.kt:193:36 'ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/SearchScreen.kt:83:44 'ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/SettingsScreen.kt:27:44 'ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack
+w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/theme/Theme.kt:31:5 Parameter 'darkTheme' is never used
+
+BUILD SUCCESSFUL in 15s
+16 actionable tasks: 3 executed, 13 up-to-date

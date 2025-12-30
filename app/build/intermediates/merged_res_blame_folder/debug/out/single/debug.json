@@ -1,0 +1,18 @@
+[
+    {
+        "merged": "com.streambox.app-merged_res-69:/drawable_ic_launcher_foreground.xml.flat",
+        "source": "com.streambox.app-main-71:/drawable/ic_launcher_foreground.xml"
+    },
+    {
+        "merged": "com.streambox.app-merged_res-69:/drawable_placeholder.xml.flat",
+        "source": "com.streambox.app-main-71:/drawable/placeholder.xml"
+    },
+    {
+        "merged": "com.streambox.app-merged_res-69:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.streambox.app-main-71:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "com.streambox.app-merged_res-69:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "com.streambox.app-main-71:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    }
+]

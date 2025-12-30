@@ -1,0 +1,40 @@
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig FROM-CACHE
+> Task :app:generateDebugResValues FROM-CACHE
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:checkDebugAarMetadata
+> Task :app:mergeDebugResources FROM-CACHE
+> Task :app:packageDebugResources FROM-CACHE
+> Task :app:parseDebugLocalResources FROM-CACHE
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug FROM-CACHE
+> Task :app:processDebugMainManifest FROM-CACHE
+> Task :app:processDebugManifest FROM-CACHE
+> Task :app:processDebugManifestForPackage FROM-CACHE
+> Task :app:processDebugResources FROM-CACHE
+> Task :app:kspDebugKotlin FROM-CACHE
+
+> Task :app:compileDebugKotlin FAILED
+e: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/runtime/JSApis.kt:223:54 One type argument expected. Use 'Function<*>' if you don't want to pass type arguments
+e: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/runtime/JSApis.kt:226:30 Unresolved reference: call
+e: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/runtime/JSApis.kt:234:54 One type argument expected. Use 'Function<*>' if you don't want to pass type arguments
+e: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/runtime/JSApis.kt:237:30 Unresolved reference: call
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 4s
+16 actionable tasks: 5 executed, 11 from cache
