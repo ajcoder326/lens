@@ -149,21 +149,31 @@ class ExtensionExecutor @Inject constructor(
      * Get streams from stream.js module
      */
     suspend fun getStreams(extensionId: String, link: String, type: String): List<StreamSource> = withContext(Dispatchers.IO) {
-        val moduleCode = loadModule(extensionId, "stream") ?: return@withContext emptyList()
+        val moduleCode = loadModule(extensionId, "stream") ?: run {
+            Log.e(TAG, "stream.js module not found for extension: $extensionId")
+            return@withContext emptyList()
+        }
+        
+        Log.d(TAG, "Executing stream.js getStreams with link: $link")
         
         val wrappedCode = """
             $moduleCode
             
-            if (typeof getStream === 'undefined' && typeof module !== 'undefined' && module.exports) {
-                var getStream = module.exports.getStream || module.exports;
+            // Support both getStreams and getStream function names
+            if (typeof getStreams === 'undefined' && typeof getStream !== 'undefined') {
+                var getStreams = getStream;
+            }
+            if (typeof getStreams === 'undefined' && typeof module !== 'undefined' && module.exports) {
+                var getStreams = module.exports.getStreams || module.exports.getStream || module.exports;
             }
         """.trimIndent()
         
         jsRuntime.callFunction(
             moduleCode = wrappedCode,
-            functionName = "getStream",
+            functionName = "getStreams",  // Use getStreams (plural)
             args = listOf(link, type, null)
         ) { result ->
+            Log.d(TAG, "stream.js returned: ${result?.toString()?.take(200)}")
             parseList<StreamSource>(result)
         }.getOrElse { 
             Log.e(TAG, "Failed to get streams", it)
@@ -306,6 +316,27 @@ class ExtensionExecutor @Inject constructor(
                 val image = map["image"]?.toString() ?: ""
                 val synopsis = map["synopsis"]?.toString() ?: ""
                 Log.d(TAG, "Creating ContentInfo - title: '${title.take(30)}', image: '${image.take(50)}', synopsis length: ${synopsis.length}")
+                
+                // Parse linkList
+                val linkList = (map["linkList"] as? List<*>)?.mapNotNull { item ->
+                    val linkMap = item as? Map<*, *> ?: return@mapNotNull null
+                    val directLinks = (linkMap["directLinks"] as? List<*>)?.mapNotNull { dl ->
+                        val dlMap = dl as? Map<*, *> ?: return@mapNotNull null
+                        DirectLink(
+                            title = dlMap["title"]?.toString() ?: "",
+                            link = dlMap["link"]?.toString() ?: "",
+                            type = dlMap["type"]?.toString()
+                        )
+                    }
+                    ContentLink(
+                        title = linkMap["title"]?.toString() ?: "",
+                        quality = linkMap["quality"]?.toString(),
+                        episodesLink = linkMap["episodesLink"]?.toString() ?: linkMap["link"]?.toString(),
+                        directLinks = directLinks
+                    )
+                } ?: emptyList()
+                Log.d(TAG, "Parsed linkList with ${linkList.size} items")
+                
                 ContentInfo(
                     title = title,
                     image = image,
@@ -313,20 +344,87 @@ class ExtensionExecutor @Inject constructor(
                     type = map["type"]?.toString() ?: "movie",
                     rating = map["rating"]?.toString(),
                     year = map["year"]?.toString(),
-                    tags = (map["tags"] as? List<*>)?.mapNotNull { it?.toString() }
+                    tags = (map["tags"] as? List<*>)?.mapNotNull { it?.toString() },
+                    linkList = linkList
                 ) as T
             }
-            StreamSource::class -> StreamSource(
-                server = map["server"]?.toString() ?: "",
-                link = map["link"]?.toString() ?: "",
-                type = map["type"]?.toString() ?: "m3u8",
-                quality = map["quality"]?.toString()
-            ) as T
+            StreamSource::class -> {
+                // Parse automation rules if present
+                val automationObj = map["automation"]
+                val automationJson = when (automationObj) {
+                    is Map<*, *> -> {
+                        try {
+                            org.json.JSONObject(automationObj as Map<*, *>).toString()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to convert Map to JSON", e)
+                            null
+                        }
+                    }
+                    is org.mozilla.javascript.NativeObject -> {
+                        try {
+                            // Convert Rhino NativeObject to JSON
+                            convertNativeObjectToJson(automationObj).toString()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to convert NativeObject to JSON", e)
+                            null
+                        }
+                    }
+                    is String -> automationObj
+                    else -> {
+                        Log.d(TAG, "Automation type: ${automationObj?.javaClass?.name}")
+                        null
+                    }
+                }
+                
+                Log.d(TAG, "StreamSource automation: ${automationJson?.take(100)}")
+                
+                StreamSource(
+                    server = map["server"]?.toString() ?: "",
+                    link = map["link"]?.toString() ?: "",
+                    type = map["type"]?.toString() ?: "m3u8",
+                    quality = map["quality"]?.toString(),
+                    automation = automationJson
+                ) as T
+            }
             Episode::class -> Episode(
                 title = map["title"]?.toString() ?: "",
                 link = map["link"]?.toString() ?: ""
             ) as T
             else -> null
+        }
+    }
+    
+    /**
+     * Convert Rhino NativeObject to org.json.JSONObject recursively
+     */
+    private fun convertNativeObjectToJson(obj: org.mozilla.javascript.NativeObject): org.json.JSONObject {
+        val json = org.json.JSONObject()
+        for (id in obj.ids) {
+            val key = id.toString()
+            val value = obj.get(key, obj)
+            json.put(key, convertToJsonValue(value))
+        }
+        return json
+    }
+    
+    /**
+     * Convert any Rhino value to JSON-compatible value
+     */
+    private fun convertToJsonValue(value: Any?): Any? {
+        return when (value) {
+            null, org.mozilla.javascript.Undefined.instance -> org.json.JSONObject.NULL
+            is org.mozilla.javascript.NativeObject -> convertNativeObjectToJson(value)
+            is org.mozilla.javascript.NativeArray -> {
+                val arr = org.json.JSONArray()
+                for (i in 0 until value.length.toInt()) {
+                    arr.put(convertToJsonValue(value.get(i, value)))
+                }
+                arr
+            }
+            is Number -> value
+            is Boolean -> value
+            is String -> value
+            else -> value.toString()
         }
     }
 }

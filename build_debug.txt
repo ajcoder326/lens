@@ -1,3 +1,5 @@
+Starting a Gradle Daemon (subsequent builds will be faster)
+Warning: SDK processing. This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.
 > Task :app:preBuild UP-TO-DATE
 > Task :app:preDebugBuild UP-TO-DATE
 > Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
@@ -33,11 +35,7 @@
 > Task :app:writeDebugAppMetadata UP-TO-DATE
 > Task :app:writeDebugSigningConfigVersions UP-TO-DATE
 > Task :app:kspDebugKotlin
-
 > Task :app:compileDebugKotlin
-w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/SettingsScreen.kt:27:44 'ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack
-w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/SettingsScreen.kt:97:21 Variable 'isLoading' is never used
-
 > Task :app:compileDebugJavaWithJavac
 > Task :app:hiltAggregateDepsDebug UP-TO-DATE
 > Task :app:hiltJavaCompileDebug
@@ -51,5 +49,5 @@ w: file:///D:/lens/StreamBox/app/src/main/java/com/streambox/app/ui/screens/Sett
 > Task :app:createDebugApkListingFileRedirect UP-TO-DATE
 > Task :app:assembleDebug
 
-BUILD SUCCESSFUL in 11s
+BUILD SUCCESSFUL in 58s
 39 actionable tasks: 9 executed, 30 up-to-date

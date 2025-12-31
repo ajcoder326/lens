@@ -21,6 +21,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.window.Dialog
 import com.streambox.app.ui.viewmodel.PlayerViewModel
 import kotlinx.coroutines.delay
 
@@ -153,6 +157,79 @@ fun PlayerScreen(
                         onAudio = { /* TODO: Show audio picker */ },
                         onSpeed = { /* TODO: Show speed picker */ }
                     )
+                }
+            }
+        }
+        
+        // Stream Selection Dialog
+        if (uiState.showStreamSelection && uiState.availableStreams.isNotEmpty()) {
+            Dialog(onDismissRequest = { viewModel.dismissStreamSelection() }) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Select Server",
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+                        
+                        LazyColumn {
+                            itemsIndexed(uiState.availableStreams) { index, stream ->
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                        .clickable { viewModel.selectStream(index) },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = stream.server,
+                                                style = MaterialTheme.typography.titleMedium
+                                            )
+                                            stream.quality?.let { quality ->
+                                                Text(
+                                                    text = quality,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                        Icon(
+                                            Icons.Default.PlayArrow,
+                                            contentDescription = "Play",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        TextButton(
+                            onClick = { viewModel.dismissStreamSelection() },
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("Cancel")
+                        }
+                    }
                 }
             }
         }

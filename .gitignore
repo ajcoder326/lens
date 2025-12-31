@@ -1,0 +1,30 @@
+# Built files
+*.iml
+.gradle/
+build/
+app/build/
+local.properties
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Test artifacts
+*.png
+*.txt
+*.json
+!app/src/main/res/**/*.json
+!extensions/**/*.json
+
+# Python test files
+*.py
+__pycache__/
+
+# Tools and temp
+tools/
+chrome-extension/
+
+# OS files
+.DS_Store
+Thumbs.db

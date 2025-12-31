@@ -77,8 +77,10 @@ class ExtensionManager @Inject constructor(
      */
     suspend fun addExtension(manifestUrl: String): Result<Extension> = withContext(Dispatchers.IO) {
         try {
+            android.util.Log.d("ExtensionManager", "addExtension called with URL: $manifestUrl")
             // Fetch manifest
             val manifest = fetchManifest(manifestUrl)
+            android.util.Log.d("ExtensionManager", "Fetched manifest: ${manifest.name}")
             
             // Generate ID
             val extensionId = generateId(manifest.name)
@@ -113,6 +115,7 @@ class ExtensionManager @Inject constructor(
             
             Result.success(extension)
         } catch (e: Exception) {
+            android.util.Log.e("ExtensionManager", "addExtension FAILED: ${e.message}", e)
             Result.failure(e)
         }
     }
