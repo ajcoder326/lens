@@ -225,6 +225,7 @@ class HiddenBrowserExtractor(private val context: Context) {
             "extractLinks" -> extractLinksFromDom(view, step)
             "waitAndClick" -> waitAndClickButton(view, step)
             "wait" -> waitForElement(view, step)
+            "click" -> clickElement(view, step)
             "extractVideoUrl" -> extractVideoUrlFromDom(view, step)
             "complete" -> completionCallback?.invoke(extractedLinks)
             else -> {
@@ -619,6 +620,54 @@ class HiddenBrowserExtractor(private val context: Context) {
             list.add("'${arr.getString(i).replace("'", "\\'")}'")
         }
         return "[${list.joinToString(",")}]"
+    }
+
+    /**
+     * Click an element on the page (e.g., play button)
+     */
+    private fun clickElement(view: WebView, step: JSONObject) {
+        val selectors = step.optJSONArray("selectors") ?: JSONArray()
+        val selectorsJs = buildSelectorsList(selectors)
+        
+        logD("clickElement - trying selectors: $selectorsJs")
+        
+        val script = """
+            (function() {
+                var selectors = $selectorsJs;
+                
+                for (var s = 0; s < selectors.length; s++) {
+                    try {
+                        var el = document.querySelector(selectors[s]);
+                        if (el) {
+                            console.log('Clicking element: ' + selectors[s]);
+                            el.click();
+                            return 'clicked:' + selectors[s];
+                        }
+                    } catch(e) {}
+                }
+                
+                // Fallback: try clicking the video element directly
+                var video = document.querySelector('video');
+                if (video) {
+                    console.log('Clicking video element');
+                    video.click();
+                    return 'clicked:video';
+                }
+                
+                return 'notfound';
+            })();
+        """.trimIndent()
+        
+        view.evaluateJavascript(script) { result ->
+            val status = result?.trim('"') ?: "notfound"
+            logD("clickElement result: $status")
+            
+            // Wait a bit for the click action to take effect (video to load)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                currentStep++
+                webView?.url?.let { processCurrentStep(webView!!, it) }
+            }, 1500)  // Wait 1.5 seconds after click
+        }
     }
 
     /**
