@@ -6,7 +6,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.streambox.app.extension.ExtensionManager
 import com.streambox.app.extension.model.StreamSource
 import com.streambox.app.player.HiddenBrowserExtractor
@@ -162,7 +165,7 @@ class PlayerViewModel @Inject constructor(
      * Handle a single stream based on its type
      */
     private fun handleStream(stream: StreamSource) {
-        Log.d(TAG, "handleStream type: ${stream.type}, link: ${stream.link}, automation: ${stream.automation?.take(100)}")
+        Log.d(TAG, "handleStream type: ${stream.type}, link: ${stream.link}, headers: ${stream.headers}")
         
         when (stream.type) {
             "automate" -> {
@@ -171,11 +174,12 @@ class PlayerViewModel @Inject constructor(
                     extractWithHiddenBrowser(stream.link, stream.automation)
                 } else {
                     Log.e(TAG, "Automate type but no automation rules")
-                    playUrl(stream.link)
+                    playUrl(stream.link, stream.headers)
                 }
             }
-            "direct" -> playUrl(stream.link)
-            else -> playUrl(stream.link)
+            "m3u8" -> playUrl(stream.link, stream.headers, isHls = true)
+            "direct" -> playUrl(stream.link, stream.headers)
+            else -> playUrl(stream.link, stream.headers)
         }
     }
     
@@ -262,13 +266,33 @@ class PlayerViewModel @Inject constructor(
         }
     }
     
-    private fun playUrl(url: String) {
-        Log.d(TAG, "Playing URL: $url")
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun playUrl(url: String, headers: Map<String, String>? = null, isHls: Boolean = false) {
+        Log.d(TAG, "Playing URL: $url, headers: $headers, isHls: $isHls")
         _uiState.update { it.copy(isLoading = true, loadingMessage = "Loading video...") }
         
         val mediaItem = MediaItem.fromUri(url)
+        
         _player?.apply {
-            setMediaItem(mediaItem)
+            if (headers != null && headers.isNotEmpty()) {
+                // Use custom DataSource with headers
+                val dataSourceFactory = DefaultHttpDataSource.Factory()
+                    .setDefaultRequestProperties(headers)
+                    .setConnectTimeoutMs(30_000)
+                    .setReadTimeoutMs(30_000)
+                
+                val mediaSource = if (isHls || url.contains(".m3u8")) {
+                    HlsMediaSource.Factory(dataSourceFactory)
+                        .createMediaSource(mediaItem)
+                } else {
+                    ProgressiveMediaSource.Factory(dataSourceFactory)
+                        .createMediaSource(mediaItem)
+                }
+                
+                setMediaSource(mediaSource)
+            } else {
+                setMediaItem(mediaItem)
+            }
             prepare()
             playWhenReady = true
         }

@@ -1,12 +1,16 @@
 package com.streambox.app.ui.screens
 
 import android.app.Activity
+import android.content.Context
 import android.content.pm.ActivityInfo
+import android.media.AudioManager
+import android.provider.Settings
 import android.view.View
 import android.view.WindowManager
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -15,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -27,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.window.Dialog
 import com.streambox.app.ui.viewmodel.PlayerViewModel
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -42,6 +48,17 @@ fun PlayerScreen(
     val uiState by viewModel.uiState.collectAsState()
     var showControls by remember { mutableStateOf(true) }
     var controlsTimeoutJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    
+    // Volume and brightness state
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
+    var currentVolume by remember { mutableFloatStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume) }
+    var currentBrightness by remember { mutableFloatStateOf(
+        activity?.window?.attributes?.screenBrightness?.takeIf { it >= 0 } ?: 0.5f
+    ) }
+    
+    // Gesture indicator state
+    var gestureIndicator by remember { mutableStateOf<GestureIndicator?>(null) }
     
     // Lock to landscape and fullscreen
     LaunchedEffect(Unit) {
@@ -73,11 +90,18 @@ fun PlayerScreen(
         }
     }
     
+    // Auto-hide gesture indicator
+    LaunchedEffect(gestureIndicator) {
+        if (gestureIndicator != null) {
+            delay(1000)
+            gestureIndicator = null
+        }
+    }
+    
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .clickable { showControls = !showControls }
     ) {
         when {
             uiState.isLoading -> {
@@ -138,6 +162,111 @@ fun PlayerScreen(
                         playerView.player = viewModel.player
                     }
                 )
+                
+                // Gesture detection zones
+                Row(modifier = Modifier.fillMaxSize()) {
+                    // Left side - Brightness
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .pointerInput(Unit) {
+                                detectVerticalDragGestures(
+                                    onDragEnd = { gestureIndicator = null },
+                                    onDragCancel = { gestureIndicator = null }
+                                ) { _, dragAmount ->
+                                    val delta = -dragAmount / size.height * 1.5f
+                                    currentBrightness = (currentBrightness + delta).coerceIn(0.01f, 1f)
+                                    activity?.window?.let { window ->
+                                        val layoutParams = window.attributes
+                                        layoutParams.screenBrightness = currentBrightness
+                                        window.attributes = layoutParams
+                                    }
+                                    gestureIndicator = GestureIndicator.Brightness(currentBrightness)
+                                }
+                            }
+                            .clickable { showControls = !showControls }
+                    )
+                    
+                    // Right side - Volume
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .pointerInput(Unit) {
+                                detectVerticalDragGestures(
+                                    onDragEnd = { gestureIndicator = null },
+                                    onDragCancel = { gestureIndicator = null }
+                                ) { _, dragAmount ->
+                                    val delta = -dragAmount / size.height * 1.5f
+                                    currentVolume = (currentVolume + delta).coerceIn(0f, 1f)
+                                    val newVolume = (currentVolume * maxVolume).toInt()
+                                    audioManager.setStreamVolume(
+                                        AudioManager.STREAM_MUSIC,
+                                        newVolume,
+                                        0
+                                    )
+                                    gestureIndicator = GestureIndicator.Volume(currentVolume)
+                                }
+                            }
+                            .clickable { showControls = !showControls }
+                    )
+                }
+                
+                // Gesture Indicator Overlay
+                gestureIndicator?.let { indicator ->
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Card(
+                            modifier = Modifier
+                                .width(200.dp)
+                                .padding(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color.Black.copy(alpha = 0.7f)
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(
+                                    when (indicator) {
+                                        is GestureIndicator.Volume -> 
+                                            if (indicator.level > 0) Icons.Default.VolumeUp else Icons.Default.VolumeOff
+                                        is GestureIndicator.Brightness -> Icons.Default.BrightnessHigh
+                                    },
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    progress = { when (indicator) {
+                                        is GestureIndicator.Volume -> indicator.level
+                                        is GestureIndicator.Brightness -> indicator.level
+                                    } },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = Color.White.copy(alpha = 0.3f)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = when (indicator) {
+                                        is GestureIndicator.Volume -> "Volume: ${(indicator.level * 100).toInt()}%"
+                                        is GestureIndicator.Brightness -> "Brightness: ${(indicator.level * 100).toInt()}%"
+                                    },
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
                 
                 // Custom Controls Overlay
                 if (showControls) {
@@ -234,6 +363,12 @@ fun PlayerScreen(
             }
         }
     }
+}
+
+// Gesture indicator types
+sealed class GestureIndicator {
+    data class Volume(val level: Float) : GestureIndicator()
+    data class Brightness(val level: Float) : GestureIndicator()
 }
 
 @Composable
