@@ -378,11 +378,34 @@ class ExtensionExecutor @Inject constructor(
                 
                 Log.d(TAG, "StreamSource automation: ${automationJson?.take(100)}")
                 
+                // Parse headers if present
+                val headersObj = map["headers"]
+                val headersMap: Map<String, String>? = when (headersObj) {
+                    is Map<*, *> -> {
+                        headersObj.entries.mapNotNull { (k, v) ->
+                            if (k != null && v != null) k.toString() to v.toString() else null
+                        }.toMap().takeIf { it.isNotEmpty() }
+                    }
+                    is org.mozilla.javascript.NativeObject -> {
+                        val map = mutableMapOf<String, String>()
+                        for (id in headersObj.ids) {
+                            val key = id.toString()
+                            val value = headersObj.get(key, headersObj)?.toString() ?: continue
+                            map[key] = value
+                        }
+                        map.takeIf { it.isNotEmpty() }
+                    }
+                    else -> null
+                }
+                
+                Log.d(TAG, "StreamSource headers: $headersMap")
+                
                 StreamSource(
                     server = map["server"]?.toString() ?: "",
                     link = map["link"]?.toString() ?: "",
                     type = map["type"]?.toString() ?: "m3u8",
                     quality = map["quality"]?.toString(),
+                    headers = headersMap,
                     automation = automationJson
                 ) as T
             }
