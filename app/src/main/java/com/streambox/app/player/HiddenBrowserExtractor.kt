@@ -213,6 +213,8 @@ class HiddenBrowserExtractor(private val context: Context) {
             "extractUrl" -> extractUrlFromDom(view, step)
             "extractLinks" -> extractLinksFromDom(view, step)
             "waitAndClick" -> waitAndClickButton(view, step)
+            "wait" -> waitForElement(view, step)
+            "extractVideoUrl" -> extractVideoUrlFromDom(view, step)
             "complete" -> completionCallback?.invoke(extractedLinks)
             else -> {
                 Log.w(TAG, "Unknown action: $action")
@@ -606,6 +608,110 @@ class HiddenBrowserExtractor(private val context: Context) {
             list.add("'${arr.getString(i).replace("'", "\\'")}'")
         }
         return "[${list.joinToString(",")}]"
+    }
+
+    /**
+     * Wait for element to appear on page before proceeding
+     */
+    private fun waitForElement(view: WebView, step: JSONObject) {
+        val selector = step.optString("selector", "video")
+        val timeout = step.optInt("timeout", 10000)
+        val pollInterval = 500L
+        var elapsed = 0L
+        
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        
+        fun checkElement() {
+            if (elapsed >= timeout) {
+                Log.w(TAG, "Timeout waiting for element: $selector")
+                currentStep++
+                webView?.url?.let { processCurrentStep(webView!!, it) }
+                return
+            }
+            
+            val script = """
+                (function() {
+                    var el = document.querySelector('$selector');
+                    return el ? 'found' : 'notfound';
+                })();
+            """.trimIndent()
+            
+            view.evaluateJavascript(script) { result ->
+                val status = result?.trim('"') ?: "notfound"
+                if (status == "found") {
+                    Log.d(TAG, "Element found: $selector")
+                    currentStep++
+                    webView?.url?.let { processCurrentStep(webView!!, it) }
+                } else {
+                    elapsed += pollInterval
+                    handler.postDelayed({ checkElement() }, pollInterval)
+                }
+            }
+        }
+        
+        checkElement()
+    }
+
+    /**
+     * Extract video URL from video/source elements (for HubStream m3u8)
+     */
+    private fun extractVideoUrlFromDom(view: WebView, step: JSONObject) {
+        val selectors = step.optJSONArray("selectors") ?: JSONArray()
+        val patterns = step.optJSONArray("patterns") ?: JSONArray()
+        
+        val selectorsJs = buildSelectorsList(selectors)
+        val patternsJs = buildPatternsList(patterns)
+        
+        val script = """
+            (function() {
+                var selectors = $selectorsJs;
+                var patterns = $patternsJs;
+                
+                // Try to find video source
+                for (var s = 0; s < selectors.length; s++) {
+                    try {
+                        var elements = document.querySelectorAll(selectors[s]);
+                        for (var i = 0; i < elements.length; i++) {
+                            var el = elements[i];
+                            var src = el.src || el.getAttribute('src') || '';
+                            
+                            // Check if URL matches patterns
+                            for (var p = 0; p < patterns.length; p++) {
+                                if (src.indexOf(patterns[p]) !== -1) {
+                                    return src;
+                                }
+                            }
+                        }
+                    } catch(e) {}
+                }
+                
+                // Fallback: search entire page for m3u8
+                var html = document.documentElement.outerHTML;
+                var match = html.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
+                if (match) return match[0];
+                
+                return null;
+            })();
+        """.trimIndent()
+        
+        view.evaluateJavascript(script) { result ->
+            val videoUrl = result?.trim('"')?.takeIf { it != "null" && it.startsWith("http") }
+            
+            if (videoUrl != null) {
+                Log.d(TAG, "Extracted video URL: ${videoUrl.take(60)}...")
+                // Add this as a playable link
+                extractedLinks.add(ExtractedLink(
+                    url = videoUrl,
+                    title = "HubStream",
+                    server = "HubStream HD"
+                ))
+                completionCallback?.invoke(extractedLinks)
+            } else {
+                Log.e(TAG, "Failed to extract video URL")
+                currentStep++
+                webView?.url?.let { processCurrentStep(webView!!, it) }
+            }
+        }
     }
 
     private fun cleanupWebView() {
