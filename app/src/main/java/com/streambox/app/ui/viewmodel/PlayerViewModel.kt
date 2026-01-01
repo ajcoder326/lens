@@ -176,21 +176,33 @@ class PlayerViewModel @Inject constructor(
      * Handle a single stream based on its type
      */
     private fun handleStream(stream: StreamSource) {
-        Log.d(TAG, "handleStream type: ${stream.type}, link: ${stream.link}, headers: ${stream.headers}")
+        logD("handleStream type: ${stream.type}, link: ${stream.link}")
+        logD("handleStream automation: ${stream.automation?.take(100)}")
+        logD("handleStream headers: ${stream.headers}")
         
         when (stream.type) {
             "automate" -> {
                 // Use hidden browser with automation rules
                 if (stream.automation != null) {
+                    logD("Calling extractWithHiddenBrowser with automation rules")
                     extractWithHiddenBrowser(stream.link, stream.automation)
                 } else {
-                    Log.e(TAG, "Automate type but no automation rules")
+                    logE("Automate type but no automation rules")
                     playUrl(stream.link, stream.headers)
                 }
             }
-            "m3u8" -> playUrl(stream.link, stream.headers, isHls = true)
-            "direct" -> playUrl(stream.link, stream.headers)
-            else -> playUrl(stream.link, stream.headers)
+            "m3u8" -> {
+                logD("Playing m3u8 stream with headers")
+                playUrl(stream.link, stream.headers, isHls = true)
+            }
+            "direct" -> {
+                logD("Playing direct stream")
+                playUrl(stream.link, stream.headers)
+            }
+            else -> {
+                logD("Playing unknown type as direct: ${stream.type}")
+                playUrl(stream.link, stream.headers)
+            }
         }
     }
     
@@ -221,12 +233,14 @@ class PlayerViewModel @Inject constructor(
                 ) 
             }
             
-            Log.d(TAG, "Starting hidden browser extraction for: $pageUrl")
+            logD("extractWithHiddenBrowser - Starting for: $pageUrl")
+            logD("extractWithHiddenBrowser - Automation JSON: ${automationJson.take(200)}")
             
             try {
                 val rules = JSONObject(automationJson)
+                logD("extractWithHiddenBrowser - Parsed rules, steps: ${rules.optJSONArray("steps")?.length() ?: 0}")
                 val extractedLinks = hiddenBrowserExtractor.extract(pageUrl, rules)
-                Log.d(TAG, "Hidden browser extraction found ${extractedLinks.size} links")
+                logD("extractWithHiddenBrowser - Found ${extractedLinks.size} links")
                 
                 if (extractedLinks.isEmpty()) {
                     _uiState.update { 

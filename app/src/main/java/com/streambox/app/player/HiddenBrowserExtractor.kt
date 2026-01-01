@@ -33,6 +33,17 @@ class HiddenBrowserExtractor(private val context: Context) {
         private const val TAG = "HiddenBrowserExtractor"
         private const val DEFAULT_TIMEOUT = 45_000L
         private const val PAGE_LOAD_DELAY = 1500L // Wait for DOM to be ready
+        
+        // Helper to log to both Android Log and DebugLogManager
+        private fun logD(message: String) {
+            Log.d(TAG, message)
+            com.streambox.app.utils.DebugLogManager.d(TAG, message)
+        }
+        
+        private fun logE(message: String) {
+            Log.e(TAG, message)
+            com.streambox.app.utils.DebugLogManager.e(TAG, message)
+        }
     }
 
     private var webView: WebView? = null
