@@ -36,12 +36,12 @@ class HiddenBrowserExtractor(private val context: Context) {
         
         // Helper to log to both Android Log and DebugLogManager
         private fun logD(message: String) {
-            logD(message)
+            android.util.Log.d(TAG, message)
             com.streambox.app.utils.DebugLogManager.d(TAG, message)
         }
         
         private fun logE(message: String) {
-            logE(message)
+            android.util.Log.e(TAG, message)
             com.streambox.app.utils.DebugLogManager.e(TAG, message)
         }
     }
