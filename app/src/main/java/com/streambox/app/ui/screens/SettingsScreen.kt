@@ -93,47 +93,117 @@ fun SettingsScreen(
             // Debug section
             SettingsSection(title = "Developer") {
                 var showDebugDialog by remember { mutableStateOf(false) }
-                var debugOutput by remember { mutableStateOf("Tap 'Test Extension' to run a test") }
-                var isLoading by remember { mutableStateOf(false) }
+                var isDebugEnabled by remember { mutableStateOf(com.streambox.app.utils.DebugLogManager.isEnabled) }
+                var logCount by remember { mutableStateOf(com.streambox.app.utils.DebugLogManager.getLogCount()) }
+                val localContext = androidx.compose.ui.platform.LocalContext.current
                 
+                // Toggle debug logging
                 SettingsItem(
-                    title = "Debug Logs",
-                    subtitle = "Test extension and view logs",
+                    title = "Enable Debug Logging",
+                    subtitle = if (isDebugEnabled) "Recording all app activity" else "Tap to start recording logs",
                     icon = Icons.Default.BugReport,
-                    onClick = { showDebugDialog = true }
+                    onClick = { 
+                        isDebugEnabled = com.streambox.app.utils.DebugLogManager.toggle()
+                        logCount = com.streambox.app.utils.DebugLogManager.getLogCount()
+                    },
+                    trailing = {
+                        Switch(
+                            checked = isDebugEnabled, 
+                            onCheckedChange = { 
+                                isDebugEnabled = com.streambox.app.utils.DebugLogManager.toggle()
+                                logCount = com.streambox.app.utils.DebugLogManager.getLogCount()
+                            }
+                        )
+                    }
+                )
+                
+                // View logs button
+                SettingsItem(
+                    title = "View Debug Logs",
+                    subtitle = "$logCount log entries captured",
+                    icon = Icons.Default.Article,
+                    onClick = { 
+                        logCount = com.streambox.app.utils.DebugLogManager.getLogCount()
+                        showDebugDialog = true 
+                    }
+                )
+                
+                // Copy logs to clipboard
+                SettingsItem(
+                    title = "Copy Logs to Clipboard",
+                    subtitle = "Copy all captured logs",
+                    icon = Icons.Default.ContentCopy,
+                    onClick = { 
+                        val success = com.streambox.app.utils.DebugLogManager.copyToClipboard(localContext)
+                        // Show a toast or feedback
+                        android.widget.Toast.makeText(
+                            localContext,
+                            if (success) "Logs copied to clipboard!" else "Failed to copy logs",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                )
+                
+                // Clear logs
+                SettingsItem(
+                    title = "Clear Logs",
+                    subtitle = "Remove all captured logs",
+                    icon = Icons.Default.DeleteSweep,
+                    onClick = { 
+                        com.streambox.app.utils.DebugLogManager.clear()
+                        logCount = 0
+                        android.widget.Toast.makeText(
+                            localContext,
+                            "Logs cleared",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 )
                 
                 if (showDebugDialog) {
                     AlertDialog(
                         onDismissRequest = { showDebugDialog = false },
-                        title = { Text("Debug Logs") },
+                        title = { Text("Debug Logs (${com.streambox.app.utils.DebugLogManager.getLogCount()} entries)") },
                         text = {
                             Column {
                                 Text(
-                                    text = "Check Logcat for detailed logs:\nadb logcat -s JSRuntime:* ExtensionExecutor:* JS:*",
+                                    text = "Tip: Enable logging, perform actions, then copy logs to share",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                                 )
-                                Spacer(modifier = Modifier.height(16.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
                                 Card(
                                     colors = CardDefaults.cardColors(
                                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                                     ),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
+                                    Column(
+                                        modifier = Modifier
+                                            .padding(12.dp)
+                                            .heightIn(min = 150.dp, max = 400.dp)
+                                            .verticalScroll(rememberScrollState())
+                                    ) {
                                         Text(
-                                            text = debugOutput,
+                                            text = com.streambox.app.utils.DebugLogManager.getLogsFormatted(),
                                             style = MaterialTheme.typography.bodySmall,
-                                            modifier = Modifier.heightIn(min = 100.dp, max = 300.dp)
+                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                                         )
                                     }
                                 }
                             }
                         },
                         confirmButton = {
-                            TextButton(onClick = { showDebugDialog = false }) {
-                                Text("Close")
+                            Row {
+                                TextButton(onClick = { 
+                                    com.streambox.app.utils.DebugLogManager.copyToClipboard(localContext)
+                                    android.widget.Toast.makeText(localContext, "Copied!", android.widget.Toast.LENGTH_SHORT).show()
+                                }) {
+                                    Text("Copy")
+                                }
+                                TextButton(onClick = { showDebugDialog = false }) {
+                                    Text("Close")
+                                }
                             }
                         }
                     )

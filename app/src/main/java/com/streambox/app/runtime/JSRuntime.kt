@@ -198,13 +198,25 @@ class JSRuntime @Inject constructor(
         val consoleObj = context.newObject(scope)
         ScriptableObject.putProperty(consoleObj, "log", object : BaseFunction() {
             override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
-                Log.d("JS", args.joinToString(" ") { Context.toString(it) })
+                val message = args.joinToString(" ") { Context.toString(it) }
+                Log.d("JS", message)
+                com.streambox.app.utils.DebugLogManager.js("Extension", message)
                 return Undefined.instance
             }
         })
         ScriptableObject.putProperty(consoleObj, "error", object : BaseFunction() {
             override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
-                Log.e("JS", args.joinToString(" ") { Context.toString(it) })
+                val message = args.joinToString(" ") { Context.toString(it) }
+                Log.e("JS", message)
+                com.streambox.app.utils.DebugLogManager.e("JS-Error", message)
+                return Undefined.instance
+            }
+        })
+        ScriptableObject.putProperty(consoleObj, "warn", object : BaseFunction() {
+            override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
+                val message = args.joinToString(" ") { Context.toString(it) }
+                Log.w("JS", message)
+                com.streambox.app.utils.DebugLogManager.w("JS-Warn", message)
                 return Undefined.instance
             }
         })

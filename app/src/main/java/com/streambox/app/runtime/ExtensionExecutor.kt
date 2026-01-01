@@ -22,6 +22,17 @@ class ExtensionExecutor @Inject constructor(
 ) {
     companion object {
         private const val TAG = "ExtensionExecutor"
+        
+        // Helper to log to both Android Log and DebugLogManager
+        private fun logD(message: String) {
+            Log.d(TAG, message)
+            com.streambox.app.utils.DebugLogManager.d(TAG, message)
+        }
+        
+        private fun logE(message: String, throwable: Throwable? = null) {
+            if (throwable != null) Log.e(TAG, message, throwable) else Log.e(TAG, message)
+            com.streambox.app.utils.DebugLogManager.e(TAG, "$message ${throwable?.message ?: ""}")
+        }
     }
     
     private val json = Json { 

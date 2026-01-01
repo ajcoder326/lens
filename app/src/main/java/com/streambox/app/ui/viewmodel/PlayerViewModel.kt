@@ -24,6 +24,17 @@ import javax.inject.Inject
 
 private const val TAG = "PlayerViewModel"
 
+// Helper to log to both Android Log and DebugLogManager
+private fun logD(message: String) {
+    Log.d(TAG, message)
+    com.streambox.app.utils.DebugLogManager.d(TAG, message)
+}
+
+private fun logE(message: String) {
+    Log.e(TAG, message)
+    com.streambox.app.utils.DebugLogManager.e(TAG, message)
+}
+
 data class PlayerUiState(
     val isLoading: Boolean = false,
     val loadingMessage: String? = null,
