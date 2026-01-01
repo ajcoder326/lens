@@ -36,12 +36,12 @@ class HiddenBrowserExtractor(private val context: Context) {
         
         // Helper to log to both Android Log and DebugLogManager
         private fun logD(message: String) {
-            Log.d(TAG, message)
+            logD(message)
             com.streambox.app.utils.DebugLogManager.d(TAG, message)
         }
         
         private fun logE(message: String) {
-            Log.e(TAG, message)
+            logE(message)
             com.streambox.app.utils.DebugLogManager.e(TAG, message)
         }
     }
@@ -82,12 +82,12 @@ class HiddenBrowserExtractor(private val context: Context) {
                         }
                     }
                     
-                    Log.d(TAG, "Starting DOM extraction for: $url")
-                    Log.d(TAG, "Steps: ${steps?.length() ?: 0}")
+                    logD("Starting DOM extraction for: $url")
+                    logD("Steps: ${steps?.length() ?: 0}")
                     webView?.loadUrl(url)
                     
                 } catch (e: Exception) {
-                    Log.e(TAG, "Extraction failed", e)
+                    logE("Extraction failed: ${e.message}")
                     cleanupWebView()
                     if (continuation.isActive) {
                         continuation.resume(emptyList())
@@ -158,7 +158,7 @@ class HiddenBrowserExtractor(private val context: Context) {
             
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                Log.d(TAG, "Page loaded: $url")
+                logD("Page loaded: $url")
                 
                 // Wait a bit for DOM to settle, then process
                 Handler(Looper.getMainLooper()).postDelayed({
@@ -172,7 +172,7 @@ class HiddenBrowserExtractor(private val context: Context) {
                 error: WebResourceError?
             ) {
                 if (request?.isForMainFrame == true) {
-                    Log.e(TAG, "Page load error: ${error?.description}")
+                    logE("Page load error: ${error?.description}")
                 }
             }
         }
@@ -205,7 +205,7 @@ class HiddenBrowserExtractor(private val context: Context) {
         }
         
         if (currentStep >= steps!!.length()) {
-            Log.d(TAG, "All steps completed, returning ${extractedLinks.size} links")
+            logD("All steps completed, returning ${extractedLinks.size} links")
             completionCallback?.invoke(extractedLinks)
             return
         }
@@ -218,7 +218,7 @@ class HiddenBrowserExtractor(private val context: Context) {
         }
         
         val action = step.optString("action")
-        Log.d(TAG, "Step $currentStep: $action on $url")
+        logD("Step $currentStep: $action on $url")
         
         when (action) {
             "extractUrl" -> extractUrlFromDom(view, step)
@@ -228,7 +228,7 @@ class HiddenBrowserExtractor(private val context: Context) {
             "extractVideoUrl" -> extractVideoUrlFromDom(view, step)
             "complete" -> completionCallback?.invoke(extractedLinks)
             else -> {
-                Log.w(TAG, "Unknown action: $action")
+                logE("Unknown action: $action")
                 currentStep++
                 processCurrentStep(view, url)
             }
@@ -284,12 +284,12 @@ class HiddenBrowserExtractor(private val context: Context) {
             val extractedUrl = result?.trim('"')?.takeIf { it != "null" && it.startsWith("http") }
             
             if (extractedUrl != null) {
-                Log.d(TAG, "Extracted URL: ${extractedUrl.take(80)}...")
+                logD("Extracted URL: ${extractedUrl.take(80)}...")
                 currentStep++
                 // Navigate to extracted URL
                 view.loadUrl(extractedUrl)
             } else {
-                Log.e(TAG, "Failed to extract URL at step $currentStep")
+                logE("Failed to extract URL at step $currentStep")
                 completionCallback?.invoke(extractedLinks)
             }
         }
@@ -380,9 +380,9 @@ class HiddenBrowserExtractor(private val context: Context) {
                     ))
                 }
                 
-                Log.d(TAG, "Extracted ${extractedLinks.size} download links")
+                logD("Extracted ${extractedLinks.size} download links")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to parse extracted links", e)
+                logE("Failed to parse extracted links: ${e.message}")
             }
             
             currentStep++
@@ -452,7 +452,7 @@ class HiddenBrowserExtractor(private val context: Context) {
                         }
                     }, waitMs)
                 } else {
-                    Log.e(TAG, "Timeout waiting for button text: $waitForText")
+                    logE("Timeout waiting for button text: $waitForText")
                     // Try to click anyway
                     view.evaluateJavascript(clickScript) { result ->
                         handleClickResult(view, result)
@@ -471,7 +471,7 @@ class HiddenBrowserExtractor(private val context: Context) {
                         }
                     }, waitMs)
                 } else {
-                    Log.e(TAG, "Timeout waiting for element: $waitForSelector")
+                    logE("Timeout waiting for element: $waitForSelector")
                     // Try to click anyway
                     view.evaluateJavascript(clickScript) { result ->
                         handleClickResult(view, result)
@@ -515,15 +515,15 @@ class HiddenBrowserExtractor(private val context: Context) {
             val status = result?.trim('"') ?: "waiting"
             
             if (status == "found") {
-                Log.d(TAG, "Element found: $selector")
+                logD("Element found: $selector")
                 callback(true)
             } else if (retryCount < maxRetries) {
-                Log.d(TAG, "Waiting for element ($retryCount/$maxRetries): $selector")
+                logD("Waiting for element ($retryCount/$maxRetries): $selector")
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                     waitForElement(view, selector, maxRetries, retryInterval, retryCount + 1, callback)
                 }, retryInterval)
             } else {
-                Log.w(TAG, "Max retries reached waiting for: $selector")
+                logE("Max retries reached waiting for: $selector")
                 callback(false)
             }
         }
@@ -570,15 +570,15 @@ class HiddenBrowserExtractor(private val context: Context) {
             val status = result?.trim('"') ?: "waiting"
             
             if (status == "found") {
-                Log.d(TAG, "Button text found: $targetText")
+                logD("Button text found: $targetText")
                 callback(true)
             } else if (retryCount < maxRetries) {
-                Log.d(TAG, "Waiting for button text ($retryCount/$maxRetries): $targetText")
+                logD("Waiting for button text ($retryCount/$maxRetries): $targetText")
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                     waitForButtonText(view, selectors, targetText, maxRetries, retryInterval, retryCount + 1, callback)
                 }, retryInterval)
             } else {
-                Log.w(TAG, "Max retries reached waiting for button text: $targetText")
+                logE("Max retries reached waiting for button text: $targetText")
                 callback(false)
             }
         }
@@ -589,7 +589,7 @@ class HiddenBrowserExtractor(private val context: Context) {
      */
     private fun handleClickResult(view: WebView, result: String?) {
         val status = result?.trim('"') ?: "notfound"
-        Log.d(TAG, "Click result: $status")
+        logD("Click result: $status")
         
         if (status == "clicked") {
             currentStep++
@@ -598,7 +598,7 @@ class HiddenBrowserExtractor(private val context: Context) {
                 webView?.url?.let { processCurrentStep(webView!!, it) }
             }, 500)
         } else {
-            Log.e(TAG, "Failed to click button at step $currentStep")
+            logE("Failed to click button at step $currentStep")
             // Move to next step anyway
             currentStep++
             webView?.url?.let { processCurrentStep(webView!!, it) }
@@ -634,7 +634,7 @@ class HiddenBrowserExtractor(private val context: Context) {
         
         fun checkElement() {
             if (elapsed >= timeout) {
-                Log.w(TAG, "Timeout waiting for element: $selector")
+                logE("Timeout waiting for element: $selector")
                 currentStep++
                 webView?.url?.let { processCurrentStep(webView!!, it) }
                 return
@@ -650,7 +650,7 @@ class HiddenBrowserExtractor(private val context: Context) {
             view.evaluateJavascript(script) { result ->
                 val status = result?.trim('"') ?: "notfound"
                 if (status == "found") {
-                    Log.d(TAG, "Element found: $selector")
+                    logD("Element found: $selector")
                     currentStep++
                     webView?.url?.let { processCurrentStep(webView!!, it) }
                 } else {
@@ -709,7 +709,7 @@ class HiddenBrowserExtractor(private val context: Context) {
             val videoUrl = result?.trim('"')?.takeIf { it != "null" && it.startsWith("http") }
             
             if (videoUrl != null) {
-                Log.d(TAG, "Extracted video URL: ${videoUrl.take(60)}...")
+                logD("Extracted video URL: ${videoUrl.take(60)}...")
                 // Add this as a playable link
                 extractedLinks.add(ExtractedLink(
                     url = videoUrl,
@@ -718,7 +718,7 @@ class HiddenBrowserExtractor(private val context: Context) {
                 ))
                 completionCallback?.invoke(extractedLinks)
             } else {
-                Log.e(TAG, "Failed to extract video URL")
+                logE("Failed to extract video URL")
                 currentStep++
                 webView?.url?.let { processCurrentStep(webView!!, it) }
             }
