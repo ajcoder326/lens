@@ -16,6 +16,8 @@ local.properties
 *.json
 !app/src/main/res/**/*.json
 !extensions/**/*.json
+!app/src/main/assets/*.txt
+!app/src/main/assets/*.js
 
 # Python test files
 *.py

@@ -27,15 +27,20 @@ class VisibleBrowserActivity : ComponentActivity() {
         
         val root = android.widget.FrameLayout(this)
         
+        // Initialize AdBlocker with context to load assets
+        com.streambox.app.utils.AdBlocker.init(this)
+        
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.javaScriptCanOpenWindowsAutomatically = false // Block automated popups
             settings.setSupportMultipleWindows(true) // Required to intercept popups via onCreateWindow
             
-            // Viewport settings for proper mobile display
+            // Viewport settings - adjusted for mobile view
+            // useWideViewPort = true allows viewport meta tags to work
+            // loadWithOverviewMode = false prevent zooming out too much (fixes "small" view)
             settings.useWideViewPort = true
-            settings.loadWithOverviewMode = true
+            settings.loadWithOverviewMode = false 
             
             // Zoom controls
             settings.setSupportZoom(true)
@@ -62,6 +67,11 @@ class VisibleBrowserActivity : ComponentActivity() {
                     
                     checkUrlForVideo(reqUrl)
                     return super.shouldInterceptRequest(view, request)
+                }
+                
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    injectCosmeticJs(view)
                 }
             }
             
@@ -101,6 +111,17 @@ class VisibleBrowserActivity : ComponentActivity() {
         Toast.makeText(this, "Browser Mode: Play video to capture", Toast.LENGTH_LONG).show()
         
         webView.loadUrl(url)
+    }
+
+    private fun injectCosmeticJs(view: WebView?) {
+        try {
+            assets.open("ad_cosmetic.js").bufferedReader().use { reader ->
+                val js = reader.readText()
+                view?.evaluateJavascript(js, null)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun checkUrlForVideo(url: String) {
