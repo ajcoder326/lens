@@ -75,6 +75,13 @@ fun PlayerScreen(
     // Gesture indicator state
     var gestureIndicator by remember { mutableStateOf<GestureIndicator?>(null) }
     
+    // Zoom mode state: 0 = Fit, 1 = Fill, 2 = Zoom
+    var zoomMode by remember { mutableIntStateOf(0) }
+    
+    // Seek gesture state
+    var isSeeking by remember { mutableStateOf(false) }
+    var seekPosition by remember { mutableLongStateOf(0L) }
+    
     // Lock to landscape and fullscreen
     LaunchedEffect(Unit) {
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -216,17 +223,26 @@ fun PlayerScreen(
                 }
             }
             else -> {
-                // Player View
+                // Player View with zoom support
                 AndroidView(
                     factory = { ctx ->
                         PlayerView(ctx).apply {
                             player = viewModel.player
                             useController = false // We use custom controls
+                            // Default to FIT mode
+                            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
                         }
                     },
                     modifier = Modifier.fillMaxSize(),
                     update = { playerView ->
                         playerView.player = viewModel.player
+                        // Update resize mode based on zoom state
+                        playerView.resizeMode = when (zoomMode) {
+                            0 -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            1 -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                            2 -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
+                            else -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        }
                     }
                 )
                 
@@ -306,28 +322,40 @@ fun PlayerScreen(
                                         is GestureIndicator.Volume -> 
                                             if (indicator.level > 0) Icons.Default.VolumeUp else Icons.Default.VolumeOff
                                         is GestureIndicator.Brightness -> Icons.Default.BrightnessHigh
+                                        is GestureIndicator.Seek -> 
+                                            if (indicator.delta >= 0) Icons.Default.FastForward else Icons.Default.FastRewind
                                     },
                                     contentDescription = null,
                                     tint = Color.White,
                                     modifier = Modifier.size(32.dp)
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
-                                LinearProgressIndicator(
-                                    progress = { when (indicator) {
-                                        is GestureIndicator.Volume -> indicator.level
-                                        is GestureIndicator.Brightness -> indicator.level
-                                    } },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(4.dp),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    trackColor = Color.White.copy(alpha = 0.3f)
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
+                                when (indicator) {
+                                    is GestureIndicator.Volume, is GestureIndicator.Brightness -> {
+                                        LinearProgressIndicator(
+                                            progress = { when (indicator) {
+                                                is GestureIndicator.Volume -> indicator.level
+                                                is GestureIndicator.Brightness -> indicator.level
+                                                else -> 0f
+                                            } },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(4.dp),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            trackColor = Color.White.copy(alpha = 0.3f)
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                    }
+                                    is GestureIndicator.Seek -> {}
+                                }
                                 Text(
                                     text = when (indicator) {
                                         is GestureIndicator.Volume -> "Volume: ${(indicator.level * 100).toInt()}%"
                                         is GestureIndicator.Brightness -> "Brightness: ${(indicator.level * 100).toInt()}%"
+                                        is GestureIndicator.Seek -> {
+                                            val sign = if (indicator.delta >= 0) "+" else ""
+                                            "${formatDuration(indicator.position)} (${sign}${indicator.delta / 1000}s)"
+                                        }
                                     },
                                     color = Color.White,
                                     style = MaterialTheme.typography.bodySmall
@@ -346,12 +374,14 @@ fun PlayerScreen(
                         duration = uiState.duration,
                         bufferedPosition = uiState.bufferedPosition,
                         isPipSupported = isPipSupported,
+                        zoomMode = zoomMode,
                         onPlayPause = { viewModel.togglePlayPause() },
                         onSeek = { viewModel.seekTo(it) },
                         onSeekForward = { viewModel.seekForward() },
                         onSeekBackward = { viewModel.seekBackward() },
                         onBack = onNavigateBack,
                         onPip = enterPipMode,
+                        onZoom = { zoomMode = (zoomMode + 1) % 3 },
                         onQuality = { viewModel.showStreamSelection() },
                         onSubtitles = { /* TODO: Show subtitle picker */ },
                         onAudio = { /* TODO: Show audio picker */ },
@@ -452,6 +482,7 @@ fun PlayerScreen(
 sealed class GestureIndicator {
     data class Volume(val level: Float) : GestureIndicator()
     data class Brightness(val level: Float) : GestureIndicator()
+    data class Seek(val position: Long, val delta: Long) : GestureIndicator()
 }
 
 @Composable
@@ -462,12 +493,14 @@ fun PlayerControlsOverlay(
     duration: Long,
     bufferedPosition: Long,
     isPipSupported: Boolean = false,
+    zoomMode: Int = 0,
     onPlayPause: () -> Unit,
     onSeek: (Long) -> Unit,
     onSeekForward: () -> Unit,
     onSeekBackward: () -> Unit,
     onBack: () -> Unit,
     onPip: () -> Unit = {},
+    onZoom: () -> Unit = {},
     onQuality: () -> Unit,
     onSubtitles: () -> Unit,
     onAudio: () -> Unit,
@@ -521,6 +554,22 @@ fun PlayerControlsOverlay(
             }
             IconButton(onClick = onQuality) {
                 Icon(Icons.Default.HighQuality, contentDescription = "Quality", tint = Color.White)
+            }
+            // Zoom button
+            IconButton(onClick = onZoom) {
+                Icon(
+                    when (zoomMode) {
+                        0 -> Icons.Default.FitScreen  // FIT
+                        1 -> Icons.Default.ZoomOutMap // ZOOM
+                        else -> Icons.Default.Fullscreen // FILL
+                    },
+                    contentDescription = when (zoomMode) {
+                        0 -> "Fit"
+                        1 -> "Zoom"
+                        else -> "Fill"
+                    },
+                    tint = Color.White
+                )
             }
         }
         
