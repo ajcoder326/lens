@@ -9,6 +9,39 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
+ * Custom WrapFactory that's Android-compatible
+ * Avoids accessing classes like javax.lang.model.SourceVersion that don't exist on Android
+ */
+class AndroidWrapFactory : WrapFactory() {
+    override fun wrap(cx: Context?, scope: Scriptable?, obj: Any?, staticType: Class<*>?): Any? {
+        return try {
+            // Avoid wrapping certain types that can cause issues on Android
+            if (obj is Throwable) {
+                // For throwables, just return the message string to avoid class loading issues
+                return obj.message ?: obj.toString()
+            }
+            super.wrap(cx, scope, obj, staticType)
+        } catch (e: NoClassDefFoundError) {
+            // Fallback: return string representation
+            obj?.toString() ?: Undefined.instance
+        } catch (e: ClassNotFoundException) {
+            obj?.toString() ?: Undefined.instance
+        }
+    }
+}
+
+/**
+ * Custom ContextFactory for Android
+ */
+class AndroidContextFactory : ContextFactory() {
+    override fun makeContext(): Context {
+        val cx = super.makeContext()
+        cx.wrapFactory = AndroidWrapFactory()
+        return cx
+    }
+}
+
+/**
  * JavaScript Runtime wrapper using Mozilla Rhino
  * Provides sandboxed JS execution environment for extensions
  */
@@ -18,6 +51,13 @@ class JSRuntime @Inject constructor(
 ) {
     companion object {
         private const val TAG = "JSRuntime"
+        
+        init {
+            // Initialize with our custom ContextFactory
+            if (!ContextFactory.hasExplicitGlobal()) {
+                ContextFactory.initGlobal(AndroidContextFactory())
+            }
+        }
     }
     
     /**
@@ -252,6 +292,37 @@ class JSRuntime @Inject constructor(
             }
         })
         ScriptableObject.putProperty(scope, "crypto", cryptoObj)
+        
+        // Inject storage APIs
+        val storageObj = context.newObject(scope)
+        ScriptableObject.putProperty(storageObj, "save", object : BaseFunction() {
+            override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
+                val key = Context.toString(args.getOrNull(0))
+                val value = Context.toString(args.getOrNull(1))
+                jsApis.saveData(key, value)
+                return Undefined.instance
+            }
+        })
+        ScriptableObject.putProperty(storageObj, "load", object : BaseFunction() {
+            override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
+                val key = Context.toString(args.getOrNull(0))
+                return jsApis.loadData(key)
+            }
+        })
+        ScriptableObject.putProperty(scope, "storage", storageObj)
+        
+        // Inject browser APIs (WebView)
+        val browserObj = context.newObject(scope)
+        ScriptableObject.putProperty(browserObj, "get", object : BaseFunction() {
+             override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
+                 val url = Context.toString(args.getOrNull(0))
+                 // Block thread until WebView returns (Rhino doesn't support await)
+                 return kotlinx.coroutines.runBlocking {
+                     jsApis.browserGet(url)
+                 }
+             }
+        })
+        ScriptableObject.putProperty(scope, "browser", browserObj)
     }
     
     private fun extractHeaders(options: ScriptableObject?): Map<String, String> {
@@ -295,7 +366,9 @@ class JSRuntime @Inject constructor(
                 }
             }
         } catch (e: Exception) {
-            throw WrappedException(e)
+            // Don't use WrappedException - it can cause ClassNotFoundException on Android
+            Log.e(TAG, "Error in wrapPromise", e)
+            throw RuntimeException("JS Error: ${e.message}")
         }
     }
     

@@ -1,13 +1,17 @@
 package com.streambox.app.runtime
 
+import android.content.SharedPreferences
 import android.util.Base64
 import android.util.Log
+import com.streambox.app.player.HiddenBrowserExtractor
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -23,14 +27,82 @@ import javax.inject.Singleton
 
 /**
  * JavaScript APIs exposed to extensions
- * Provides axios-like HTTP, cheerio-like DOM parsing, and crypto utilities
+ * Provides axios-like HTTP, cheerio-like DOM parsing, crypto, storage, and WebView
  */
 @Singleton
 class JSApis @Inject constructor(
-    private val httpClient: OkHttpClient
+    private val httpClient: OkHttpClient,
+    @ApplicationContext private val context: android.content.Context
 ) {
     companion object {
         private const val TAG = "JSApis"
+        private const val PREFS_NAME = "extension_prefs"
+    }
+    
+    // Cookie Store: Map<Domain, CookieString>
+    private val cookieStore = java.util.concurrent.ConcurrentHashMap<String, String>()
+    
+    // Lazy initialization of SharedPreferences
+    private val prefs: SharedPreferences by lazy {
+        context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+    }
+    
+    // ============ Storage APIs ============
+    
+    fun saveData(key: String, value: String) {
+        prefs.edit().putString(key, value).apply()
+        Log.d(TAG, "Saved data for key: $key")
+    }
+    
+    fun loadData(key: String): String {
+        return prefs.getString(key, "") ?: ""
+    }
+    
+    // ============ Browser APIs ============
+    
+    suspend fun browserGet(url: String): String {
+        val requestId = java.util.UUID.randomUUID().toString()
+        val deferred = kotlinx.coroutines.CompletableDeferred<String>() // Use fully qualified or import
+        com.streambox.app.utils.BrowserBus.requests[requestId] = deferred
+        
+        val intent = android.content.Intent(context, com.streambox.app.ui.CloudflareSolverActivity::class.java).apply {
+            putExtra("URL", url)
+            putExtra("REQUEST_ID", requestId)
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+        
+        val resultRaw = deferred.await()
+        com.streambox.app.utils.BrowserBus.requests.remove(requestId)
+        
+        // Attempt to parse JSON envelope (new protocol)
+        try {
+            if (resultRaw.trim().startsWith("{")) {
+                val json = JSONObject(resultRaw)
+                if (json.has("html")) {
+                    val html = json.getString("html")
+                    
+                    if (json.has("cookies")) {
+                        val cookies = json.getString("cookies")
+                        val currentUrl = json.optString("currentUrl", url)
+                        try {
+                            val domain = java.net.URI(currentUrl).host
+                            if (domain != null && cookies.isNotEmpty()) {
+                                cookieStore[domain] = cookies
+                                Log.d(TAG, "Stored cookies for $domain")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to parse domain from $currentUrl", e)
+                        }
+                    }
+                    return html
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse browser result as JSON, returning raw", e)
+        }
+        
+        return resultRaw
     }
     
     // ============ HTTP APIs (axios-like) ============
@@ -38,6 +110,24 @@ class JSApis @Inject constructor(
     suspend fun httpGet(url: String, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
         try {
             val requestBuilder = Request.Builder().url(url)
+            
+            // Auto-inject cookies from Browser sessions
+            val hasCookie = headers.keys.any { it.equals("Cookie", ignoreCase = true) }
+            if (!hasCookie) {
+                try {
+                    val domain = java.net.URI(url).host
+                    if (domain != null && cookieStore.containsKey(domain)) {
+                        val cookies = cookieStore[domain]
+                        if (!cookies.isNullOrEmpty()) {
+                            requestBuilder.addHeader("Cookie", cookies)
+                            // Log.d(TAG, "Injected cookies for $domain")
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Ignore URI parse errors
+                }
+            }
+            
             headers.forEach { (key, value) ->
                 requestBuilder.addHeader(key, value)
             }
@@ -58,6 +148,22 @@ class JSApis @Inject constructor(
             val requestBuilder = Request.Builder()
                 .url(url)
                 .post(requestBody)
+            
+            // Auto-inject cookies from Browser sessions
+            val hasCookie = headers.keys.any { it.equals("Cookie", ignoreCase = true) }
+            if (!hasCookie) {
+                try {
+                    val domain = java.net.URI(url).host
+                    if (domain != null && cookieStore.containsKey(domain)) {
+                        val cookies = cookieStore[domain]
+                        if (!cookies.isNullOrEmpty()) {
+                            requestBuilder.addHeader("Cookie", cookies)
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Ignore URI parse errors
+                }
+            }
             
             headers.forEach { (key, value) ->
                 requestBuilder.addHeader(key, value)
@@ -88,7 +194,6 @@ class JSApis @Inject constructor(
     ) : BaseFunction() {
         
         init {
-            // Make this callable as a function: $('selector')
             setParentScope(parentScope)
             try {
                 setPrototype(getObjectPrototype(parentScope))
@@ -113,7 +218,7 @@ class JSApis @Inject constructor(
     }
     
     /**
-     * Wrapper for Elements collection (like jQuery object)
+     * Wrapper for Elements collection
      */
     inner class ElementsWrapper(
         private val cx: Context,
@@ -150,10 +255,9 @@ class JSApis @Inject constructor(
                 "next" -> createNextFunction()
                 "prev" -> createPrevFunction()
                 "hasClass" -> createHasClassFunction()
-                "addClass" -> this // No-op for reading
-                "removeClass" -> this // No-op for reading
+                "addClass" -> this
+                "removeClass" -> this
                 else -> {
-                    // Try numeric index
                     name.toIntOrNull()?.let { index ->
                         if (index in 0 until elements.size) {
                             return ElementWrapper(cx, parentScope, elements[index])
@@ -174,32 +278,20 @@ class JSApis @Inject constructor(
         
         private fun createFirstFunction() = object : BaseFunction() {
             override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
-                return if (elements.isNotEmpty()) {
-                    ElementWrapper(cx, scope, elements.first())
-                } else {
-                    ElementsWrapper(cx, scope, Elements())
-                }
+                return if (elements.isNotEmpty()) ElementWrapper(cx, scope, elements.first()) else ElementsWrapper(cx, scope, Elements())
             }
         }
         
         private fun createLastFunction() = object : BaseFunction() {
             override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
-                return if (elements.isNotEmpty()) {
-                    ElementWrapper(cx, scope, elements.last())
-                } else {
-                    ElementsWrapper(cx, scope, Elements())
-                }
+                return if (elements.isNotEmpty()) ElementWrapper(cx, scope, elements.last()) else ElementsWrapper(cx, scope, Elements())
             }
         }
         
         private fun createEqFunction() = object : BaseFunction() {
             override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
                 val index = (args.getOrNull(0) as? Number)?.toInt() ?: 0
-                return if (index in 0 until elements.size) {
-                    ElementWrapper(cx, scope, elements[index])
-                } else {
-                    ElementsWrapper(cx, scope, Elements())
-                }
+                return if (index in 0 until elements.size) ElementWrapper(cx, scope, elements[index]) else ElementsWrapper(cx, scope, Elements())
             }
         }
         
@@ -254,7 +346,7 @@ class JSApis @Inject constructor(
         private fun createFilterFunction() = object : BaseFunction() {
             override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
                 val selector = Context.toString(args.getOrNull(0) ?: "")
-                val filtered = elements.toList().filter { it.`is`(selector) }
+                val filtered = elements.mapNotNull { if (it.`is`(selector)) it else null }
                 return ElementsWrapper(cx, scope, Elements(filtered))
             }
         }
@@ -306,7 +398,6 @@ class JSApis @Inject constructor(
     ) : ScriptableObject() {
         
         init {
-            // Set parent scope first - this is required for Rhino
             setParentScope(parentScope)
             try {
                 setPrototype(getObjectPrototype(parentScope))
@@ -344,11 +435,7 @@ class JSApis @Inject constructor(
                 "parent" -> object : BaseFunction() {
                     override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
                         val parent = element.parent()
-                        return if (parent != null) {
-                            ElementWrapper(cx, scope, parent)
-                        } else {
-                            Undefined.instance
-                        }
+                        return if (parent != null) ElementWrapper(cx, scope, parent) else Undefined.instance
                     }
                 }
                 "children" -> object : BaseFunction() {
@@ -359,21 +446,13 @@ class JSApis @Inject constructor(
                 "next" -> object : BaseFunction() {
                     override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
                         val next = element.nextElementSibling()
-                        return if (next != null) {
-                            ElementWrapper(cx, scope, next)
-                        } else {
-                            Undefined.instance
-                        }
+                        return if (next != null) ElementWrapper(cx, scope, next) else Undefined.instance
                     }
                 }
                 "prev" -> object : BaseFunction() {
                     override fun call(cx: Context, scope: Scriptable, thisObj: Scriptable, args: Array<out Any>): Any {
                         val prev = element.previousElementSibling()
-                        return if (prev != null) {
-                            ElementWrapper(cx, scope, prev)
-                        } else {
-                            Undefined.instance
-                        }
+                        return if (prev != null) ElementWrapper(cx, scope, prev) else Undefined.instance
                     }
                 }
                 "hasClass" -> object : BaseFunction() {

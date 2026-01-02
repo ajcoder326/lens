@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import android.webkit.*
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
@@ -51,6 +50,7 @@ class HiddenBrowserExtractor(private val context: Context) {
     private var completionCallback: ((List<ExtractedLink>) -> Unit)? = null
     private var steps: JSONArray? = null
     private var currentStep = 0
+    private var blockedPatterns: List<String> = emptyList()
 
     data class ExtractedLink(
         val url: String,
@@ -61,14 +61,26 @@ class HiddenBrowserExtractor(private val context: Context) {
 
     /**
      * Extract download URLs using DOM-only navigation
-     * 
-     * @param url The starting URL
-     * @param rules JSON with "steps" array defining extraction at each page
      */
     suspend fun extract(url: String, rules: JSONObject): List<ExtractedLink> = withTimeout(DEFAULT_TIMEOUT) {
         suspendCancellableCoroutine { continuation ->
             extractedLinks.clear()
             steps = rules.optJSONArray("steps")
+            
+            // Load blocked patterns from extension rules
+            val patternsJson = rules.optJSONArray("blockedPatterns")
+            val patternList = mutableListOf<String>()
+            if (patternsJson != null) {
+                for (i in 0 until patternsJson.length()) {
+                    patternList.add(patternsJson.getString(i))
+                }
+            } else {
+                // Default safe blocks only if none provided
+                patternList.add("analytics")
+                patternList.add("tracking")
+            }
+            blockedPatterns = patternList
+            
             currentStep = 0
             
             Handler(Looper.getMainLooper()).post {
@@ -134,23 +146,61 @@ class HiddenBrowserExtractor(private val context: Context) {
                 view: WebView?,
                 request: WebResourceRequest?
             ): WebResourceResponse? {
-                val url = request?.url?.toString()?.lowercase() ?: return null
+                val url = request?.url?.toString() ?: return null
+                val urlLower = url.lowercase()
                 
-                // Block everything except HTML/JS - we only need DOM
-                val blockedPatterns = listOf(
-                    // Ads
-                    "4rabet", "mexc.com", "betting", "casino", "doubleclick",
-                    "googlesyndication", "adservice", "popads", "popcash",
-                    "propellerads", "exoclick", "stske.net", "adcash",
-                    // Media
+                // CAPTURE video URLs - m3u8 for streaming, mp4 for direct downloads
+                val isM3u8 = (urlLower.contains(".m3u8") || urlLower.contains("/hls")) && 
+                    !urlLower.contains("beacon") && !urlLower.contains("analytics")
+                
+                // Capture direct MP4/MKV download URLs (from speedostream, hubcloud, etc.)
+                val isMp4 = (urlLower.contains(".mp4") || urlLower.contains(".mkv")) &&
+                    (urlLower.contains("ydc1wes.me") || urlLower.contains("/v/") || urlLower.contains("/d/")) &&
+                    !urlLower.contains("thumb") && !urlLower.contains("preview")
+                
+                if (isM3u8 || isMp4) {
+                    val videoType = if (isM3u8) "m3u8" else "mp4"
+                    logD("🎬 Captured $videoType URL: ${url.take(100)}...")
+                    
+                    // Complete with this video URL - only once
+                    if (completionCallback != null) {
+                        val capturedLink = ExtractedLink(
+                            url = url,
+                            title = if (isMp4) "Download" else "Stream",
+                            server = if (isMp4) "Direct Download" else "Stream",
+                            quality = when {
+                                urlLower.contains("_x") || urlLower.contains(",x,") -> "UHD"
+                                urlLower.contains("_h") || urlLower.contains(",h,") -> "HD"
+                                else -> "SD"
+                            }
+                        )
+                        
+                        // Call completion callback on main thread
+                        Handler(Looper.getMainLooper()).post {
+                            completionCallback?.invoke(listOf(capturedLink))
+                            completionCallback = null  // Prevent duplicate calls
+                        }
+                    }
+                    
+                    // Don't block MP4 downloads - let them proceed (for download functionality)
+                    if (isM3u8) {
+                        return WebResourceResponse("text/plain", "UTF-8", null)
+                    }
+                }
+                
+                // Block ads and unnecessary resources based on EXTENSION rules
+                if (blockedPatterns.any { urlLower.contains(it) }) {
+                    return WebResourceResponse("text/plain", "UTF-8", null)
+                }
+                
+                // Always block common media types to speed up scraping if not captured above
+                val mediaTypes = listOf(
                     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
-                    ".mp4", ".webm", ".mp3", ".woff", ".woff2", ".ttf",
-                    // Tracking
-                    "analytics", "tracking", "facebook.com", "twitter.com"
+                    ".woff", ".woff2", ".ttf"
                 )
                 
-                if (blockedPatterns.any { url.contains(it) }) {
-                    return WebResourceResponse("text/plain", "UTF-8", null)
+                if (mediaTypes.any { urlLower.contains(it) }) {
+                     return WebResourceResponse("text/plain", "UTF-8", null)
                 }
                 
                 return super.shouldInterceptRequest(view, request)
@@ -224,8 +274,8 @@ class HiddenBrowserExtractor(private val context: Context) {
             "extractUrl" -> extractUrlFromDom(view, step)
             "extractLinks" -> extractLinksFromDom(view, step)
             "waitAndClick" -> waitAndClickButton(view, step)
-            "wait" -> waitForElement(view, step)
-            "click" -> clickElement(view, step)
+            "wait", "waitForElement" -> waitForElement(view, step)
+            "click", "clickElement" -> clickElement(view, step)
             "extractVideoUrl" -> extractVideoUrlFromDom(view, step)
             "complete" -> completionCallback?.invoke(extractedLinks)
             else -> {
@@ -494,6 +544,30 @@ class HiddenBrowserExtractor(private val context: Context) {
      */
     private fun waitForElement(
         view: WebView, 
+        step: JSONObject
+    ) {
+        val selector = step.optString("selector", "video")
+        val timeout = step.optInt("timeout", 10000)
+        val checkInterval = 500L
+        val maxRetries = (timeout / checkInterval).toInt()
+        
+        waitForElement(view, selector, maxRetries, checkInterval, 0) { found ->
+            if (found) {
+                logD("Element found, proceeding: $selector")
+                currentStep++
+                view.url?.let { processCurrentStep(view, it) }
+            } else {
+                logE("Timeout waiting for element: $selector")
+                // Could be end of chain or error, maybe just proceed?
+                // For now, proceed
+                currentStep++
+                view.url?.let { processCurrentStep(view, it) }
+            }
+        }
+    }
+    
+    private fun waitForElement(
+        view: WebView, 
         selector: String, 
         maxRetries: Int, 
         retryInterval: Long,
@@ -627,6 +701,12 @@ class HiddenBrowserExtractor(private val context: Context) {
      */
     private fun clickElement(view: WebView, step: JSONObject) {
         val selectors = step.optJSONArray("selectors") ?: JSONArray()
+        // Allow single selector string as fallback
+        val singleSelector = step.optString("selector", "")
+        if (singleSelector.isNotEmpty() && selectors.length() == 0) {
+            selectors.put(singleSelector)
+        }
+        
         val selectorsJs = buildSelectorsList(selectors)
         
         logD("clickElement - trying selectors: $selectorsJs")
@@ -670,120 +750,98 @@ class HiddenBrowserExtractor(private val context: Context) {
         }
     }
 
-    /**
-     * Wait for element to appear on page before proceeding
-     */
-    private fun waitForElement(view: WebView, step: JSONObject) {
-        val selector = step.optString("selector", "video")
-        val timeout = step.optInt("timeout", 10000)
-        val pollInterval = 500L
-        var elapsed = 0L
-        
-        val handler = android.os.Handler(android.os.Looper.getMainLooper())
-        
-        fun checkElement() {
-            if (elapsed >= timeout) {
-                logE("Timeout waiting for element: $selector")
-                currentStep++
-                webView?.url?.let { processCurrentStep(webView!!, it) }
-                return
-            }
-            
-            val script = """
-                (function() {
-                    var el = document.querySelector('$selector');
-                    return el ? 'found' : 'notfound';
-                })();
-            """.trimIndent()
-            
-            view.evaluateJavascript(script) { result ->
-                val status = result?.trim('"') ?: "notfound"
-                if (status == "found") {
-                    logD("Element found: $selector")
-                    currentStep++
-                    webView?.url?.let { processCurrentStep(webView!!, it) }
-                } else {
-                    elapsed += pollInterval
-                    handler.postDelayed({ checkElement() }, pollInterval)
-                }
-            }
-        }
-        
-        checkElement()
-    }
-
-    /**
-     * Extract video URL from video/source elements (for HubStream m3u8)
-     */
     private fun extractVideoUrlFromDom(view: WebView, step: JSONObject) {
-        val selectors = step.optJSONArray("selectors") ?: JSONArray()
-        val patterns = step.optJSONArray("patterns") ?: JSONArray()
-        
-        val selectorsJs = buildSelectorsList(selectors)
-        val patternsJs = buildPatternsList(patterns)
-        
         val script = """
             (function() {
-                var selectors = $selectorsJs;
-                var patterns = $patternsJs;
-                
-                // Try to find video source
-                for (var s = 0; s < selectors.length; s++) {
-                    try {
-                        var elements = document.querySelectorAll(selectors[s]);
-                        for (var i = 0; i < elements.length; i++) {
-                            var el = elements[i];
-                            var src = el.src || el.getAttribute('src') || '';
-                            
-                            // Check if URL matches patterns
-                            for (var p = 0; p < patterns.length; p++) {
-                                if (src.indexOf(patterns[p]) !== -1) {
-                                    return src;
-                                }
-                            }
-                        }
-                    } catch(e) {}
-                }
-                
-                // Fallback: search entire page for m3u8
-                var html = document.documentElement.outerHTML;
-                var match = html.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
-                if (match) return match[0];
-                
+                var video = document.querySelector('video');
+                if (video && video.src) return video.src;
+                var source = document.querySelector('video source');
+                if (source && source.src) return source.src;
                 return null;
             })();
         """.trimIndent()
         
         view.evaluateJavascript(script) { result ->
-            val videoUrl = result?.trim('"')?.takeIf { it != "null" && it.startsWith("http") }
-            
-            if (videoUrl != null) {
-                logD("Extracted video URL: ${videoUrl.take(60)}...")
-                // Add this as a playable link
-                extractedLinks.add(ExtractedLink(
-                    url = videoUrl,
-                    title = "HubStream",
-                    server = "HubStream HD"
-                ))
+            val url = result?.trim('"')?.takeIf { it != "null" && it.startsWith("http") }
+            if (url != null) {
+                extractedLinks.add(ExtractedLink(url, "Direct Video", "SpeedoStream", "HD"))
                 completionCallback?.invoke(extractedLinks)
             } else {
-                logE("Failed to extract video URL")
                 currentStep++
-                webView?.url?.let { processCurrentStep(webView!!, it) }
+                processCurrentStep(view, view.url ?: "")
             }
         }
     }
 
     private fun cleanupWebView() {
-        webView?.apply {
-            stopLoading()
-            loadUrl("about:blank")
-            clearHistory()
-            removeAllViews()
-            destroy()
+         webView?.stopLoading()
+         webView?.destroy()
+         webView = null
+    }
+
+    /**
+     * Fetch the full HTML of a page using WebView (Bypasses Cloudflare)
+     */
+    suspend fun fetchHtml(url: String): String = withTimeout(DEFAULT_TIMEOUT) {
+        suspendCancellableCoroutine { continuation ->
+            val mainHandler = Handler(Looper.getMainLooper())
+            mainHandler.post {
+                try {
+                    cleanupWebView() // Clear previous
+                    
+                    webView = WebView(context).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        // Use Mobile UA for better Cloudflare pass rate
+                        settings.userAgentString = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                        
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                super.onPageFinished(view, url)
+                                
+                                // Wait 5 seconds for Cloudflare/Loading
+                                mainHandler.postDelayed({
+                                    evaluateJavascript("(function() { return document.documentElement.outerHTML; })();") { html ->
+                                        // The result is a JSON string (e.g. "<html>..."), need to unquote
+                                        val finalHtml = try {
+                                            if (html != null && html != "null") {
+                                                if (html.startsWith("\"") && html.endsWith("\"")) {
+                                                     JSONObject("{\"d\":$html}").getString("d")
+                                                } else {
+                                                    html
+                                                }
+                                            } else {
+                                                ""
+                                            }
+                                        } catch (e: Exception) {
+                                            html ?: ""
+                                        }
+                                        
+                                        if (continuation.isActive) {
+                                            continuation.resume(finalHtml)
+                                        }
+                                        cleanupWebView()
+                                    }
+                                }, 5000) 
+                            }
+                            
+                            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                                super.onReceivedError(view, request, error)
+                            }
+                        }
+                        loadUrl(url)
+                    }
+                } catch (e: Exception) {
+                    if (continuation.isActive) {
+                        continuation.resume("")
+                    }
+                    cleanupWebView()
+                }
+            }
+            
+            continuation.invokeOnCancellation {
+                mainHandler.post { cleanupWebView() }
+            }
         }
-        webView = null
-        completionCallback = null
-        steps = null
     }
 }

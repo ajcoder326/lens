@@ -4,9 +4,14 @@ import android.app.Activity
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
+import android.os.Build
 import android.provider.Settings
 import android.view.View
 import android.view.WindowManager
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,15 +26,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.window.Dialog
+import com.streambox.app.LocalPipMode
+import com.streambox.app.player.PipHelper
 import com.streambox.app.ui.viewmodel.PlayerViewModel
 import kotlinx.coroutines.delay
 import kotlin.math.abs
@@ -44,10 +54,15 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    val lifecycleOwner = LocalLifecycleOwner.current
     
     val uiState by viewModel.uiState.collectAsState()
     var showControls by remember { mutableStateOf(true) }
     var controlsTimeoutJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    
+    // PIP mode state
+    val isInPipMode by LocalPipMode.current
+    val isPipSupported = remember { PipHelper.isPipSupported(context) }
     
     // Volume and brightness state
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -73,18 +88,56 @@ fun PlayerScreen(
         viewModel.loadStream(streamUrl)
     }
     
+    // Setup auto-enter PIP when player is ready and playing
+    LaunchedEffect(uiState.isPlaying) {
+        if (uiState.isPlaying && activity != null && isPipSupported) {
+            PipHelper.setupAutoPip(activity, viewModel.player)
+        }
+    }
+    
+    // Handle lifecycle events for PIP
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> {
+                    // Enter PIP if playing and leaving app (for Android < 12)
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S &&
+                        uiState.isPlaying && 
+                        activity != null && 
+                        isPipSupported &&
+                        !PipHelper.isInPipMode(activity)) {
+                        PipHelper.enterPipMode(activity, viewModel.player)
+                    }
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    // If we're in PIP mode and user closed PIP, navigate back
+                    if (activity != null && !PipHelper.isInPipMode(activity) && isInPipMode) {
+                        // PIP was closed
+                    }
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+    
     // Restore orientation on exit
     DisposableEffect(Unit) {
         onDispose {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            // Disable auto-PIP when leaving player
+            activity?.let { PipHelper.disableAutoPip(it) }
             viewModel.release()
         }
     }
     
-    // Auto-hide controls
-    LaunchedEffect(showControls) {
-        if (showControls) {
+    // Auto-hide controls (not in PIP mode)
+    LaunchedEffect(showControls, isInPipMode) {
+        if (showControls && !isInPipMode) {
             delay(5000)
             showControls = false
         }
@@ -98,12 +151,26 @@ fun PlayerScreen(
         }
     }
     
+    // Enter PIP mode function
+    val enterPipMode: () -> Unit = {
+        activity?.let { act ->
+            PipHelper.enterPipMode(act, viewModel.player)
+        }
+    }
+    
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
         when {
+            // WebView mode for iframe playback
+            uiState.isWebViewMode && uiState.webViewUrl != null -> {
+                WebViewPlayer(
+                    url = uiState.webViewUrl!!,
+                    onBack = onNavigateBack
+                )
+            }
             uiState.isLoading -> {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -163,45 +230,47 @@ fun PlayerScreen(
                     }
                 )
                 
-                // Gesture detection zones
-                Row(modifier = Modifier.fillMaxSize()) {
-                    // Left side - Brightness
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .pointerInput(Unit) {
-                                detectVerticalDragGestures(
-                                    onDragEnd = { gestureIndicator = null },
-                                    onDragCancel = { gestureIndicator = null }
-                                ) { _, dragAmount ->
-                                    val delta = -dragAmount / size.height * 1.5f
-                                    currentBrightness = (currentBrightness + delta).coerceIn(0.01f, 1f)
-                                    activity?.window?.let { window ->
-                                        val layoutParams = window.attributes
-                                        layoutParams.screenBrightness = currentBrightness
-                                        window.attributes = layoutParams
+                // Hide all overlays in PIP mode - just show the video
+                if (!isInPipMode) {
+                    // Gesture detection zones
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        // Left side - Brightness
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .pointerInput(Unit) {
+                                    detectVerticalDragGestures(
+                                        onDragEnd = { gestureIndicator = null },
+                                        onDragCancel = { gestureIndicator = null }
+                                    ) { _, dragAmount ->
+                                        val delta = -dragAmount / size.height * 1.5f
+                                        currentBrightness = (currentBrightness + delta).coerceIn(0.01f, 1f)
+                                        activity?.window?.let { window ->
+                                            val layoutParams = window.attributes
+                                            layoutParams.screenBrightness = currentBrightness
+                                            window.attributes = layoutParams
+                                        }
+                                        gestureIndicator = GestureIndicator.Brightness(currentBrightness)
                                     }
-                                    gestureIndicator = GestureIndicator.Brightness(currentBrightness)
                                 }
-                            }
-                            .clickable { showControls = !showControls }
-                    )
-                    
-                    // Right side - Volume
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .pointerInput(Unit) {
-                                detectVerticalDragGestures(
-                                    onDragEnd = { gestureIndicator = null },
-                                    onDragCancel = { gestureIndicator = null }
-                                ) { _, dragAmount ->
-                                    val delta = -dragAmount / size.height * 1.5f
-                                    currentVolume = (currentVolume + delta).coerceIn(0f, 1f)
-                                    val newVolume = (currentVolume * maxVolume).toInt()
-                                    audioManager.setStreamVolume(
+                                .clickable { showControls = !showControls }
+                        )
+                        
+                        // Right side - Volume
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .pointerInput(Unit) {
+                                    detectVerticalDragGestures(
+                                        onDragEnd = { gestureIndicator = null },
+                                        onDragCancel = { gestureIndicator = null }
+                                    ) { _, dragAmount ->
+                                        val delta = -dragAmount / size.height * 1.5f
+                                        currentVolume = (currentVolume + delta).coerceIn(0f, 1f)
+                                        val newVolume = (currentVolume * maxVolume).toInt()
+                                        audioManager.setStreamVolume(
                                         AudioManager.STREAM_MUSIC,
                                         newVolume,
                                         0
@@ -276,17 +345,20 @@ fun PlayerScreen(
                         currentPosition = uiState.currentPosition,
                         duration = uiState.duration,
                         bufferedPosition = uiState.bufferedPosition,
+                        isPipSupported = isPipSupported,
                         onPlayPause = { viewModel.togglePlayPause() },
                         onSeek = { viewModel.seekTo(it) },
                         onSeekForward = { viewModel.seekForward() },
                         onSeekBackward = { viewModel.seekBackward() },
                         onBack = onNavigateBack,
-                        onQuality = { /* TODO: Show quality picker */ },
+                        onPip = enterPipMode,
+                        onQuality = { viewModel.showStreamSelection() },
                         onSubtitles = { /* TODO: Show subtitle picker */ },
                         onAudio = { /* TODO: Show audio picker */ },
                         onSpeed = { /* TODO: Show speed picker */ }
                     )
                 }
+                } // End of !isInPipMode block
             }
         }
         
@@ -378,16 +450,21 @@ fun PlayerControlsOverlay(
     currentPosition: Long,
     duration: Long,
     bufferedPosition: Long,
+    isPipSupported: Boolean = false,
     onPlayPause: () -> Unit,
     onSeek: (Long) -> Unit,
     onSeekForward: () -> Unit,
     onSeekBackward: () -> Unit,
     onBack: () -> Unit,
+    onPip: () -> Unit = {},
     onQuality: () -> Unit,
     onSubtitles: () -> Unit,
     onAudio: () -> Unit,
     onSpeed: () -> Unit
 ) {
+    var isDragging by remember { mutableStateOf(false) }
+    var sliderValue by remember { mutableFloatStateOf(0f) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -412,6 +489,13 @@ fun PlayerControlsOverlay(
                     color = Color.White,
                     modifier = Modifier.weight(1f)
                 )
+            }
+            
+            // PIP button (if supported)
+            if (isPipSupported) {
+                IconButton(onClick = onPip) {
+                    Icon(Icons.Default.PictureInPicture, contentDescription = "Picture in Picture", tint = Color.White)
+                }
             }
             
             // Right controls
@@ -471,8 +555,15 @@ fun PlayerControlsOverlay(
                 .padding(16.dp)
         ) {
             Slider(
-                value = if (duration > 0) currentPosition.toFloat() / duration else 0f,
-                onValueChange = { onSeek((it * duration).toLong()) },
+                value = if (isDragging) sliderValue else (if (duration > 0) currentPosition.toFloat() / duration else 0f),
+                onValueChange = { 
+                    isDragging = true
+                    sliderValue = it
+                },
+                onValueChangeFinished = {
+                    isDragging = false
+                    onSeek((sliderValue * duration).toLong())
+                },
                 colors = SliderDefaults.colors(
                     thumbColor = MaterialTheme.colorScheme.primary,
                     activeTrackColor = MaterialTheme.colorScheme.primary,
@@ -509,5 +600,81 @@ private fun formatDuration(millis: Long): String {
         String.format("%d:%02d:%02d", hours, minutes, seconds)
     } else {
         String.format("%02d:%02d", minutes, seconds)
+    }
+}
+
+/**
+ * WebView player for iframe-based streaming (TMDB servers)
+ */
+@Composable
+fun WebViewPlayer(
+    url: String,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    settings.apply {
+                        javaScriptEnabled = true
+                        domStorageEnabled = true
+                        mediaPlaybackRequiresUserGesture = false
+                        allowFileAccess = true
+                        allowContentAccess = true
+                        loadWithOverviewMode = true
+                        useWideViewPort = true
+                        builtInZoomControls = false
+                        displayZoomControls = false
+                        setSupportZoom(false)
+                        mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        userAgentString = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                    }
+                    
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
+                            // Allow all URLs to load in the WebView
+                            return false
+                        }
+                    }
+                    
+                    webChromeClient = object : WebChromeClient() {
+                        // Support fullscreen video playback
+                        override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                            super.onShowCustomView(view, callback)
+                        }
+                        
+                        override fun onHideCustomView() {
+                            super.onHideCustomView()
+                        }
+                    }
+                    
+                    loadUrl(url)
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+            update = { webView ->
+                // Update URL if needed
+                if (webView.url != url) {
+                    webView.loadUrl(url)
+                }
+            }
+        )
+        
+        // Back button overlay
+        IconButton(
+            onClick = onBack,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(16.dp)
+        ) {
+            Icon(
+                Icons.Default.ArrowBack,
+                contentDescription = "Back",
+                tint = Color.White,
+                modifier = Modifier.size(32.dp)
+            )
+        }
     }
 }

@@ -70,6 +70,15 @@ class ExtensionManager @Inject constructor(
                 }
             }
         }
+        
+        // Check for updates on startup
+        scope.launch {
+            try {
+                checkForUpdates()
+            } catch (e: Exception) {
+                android.util.Log.e("ExtensionManager", "Auto-update failed", e)
+            }
+        }
     }
     
     /**
@@ -141,6 +150,47 @@ class ExtensionManager @Inject constructor(
         _activeExtension.value = extension
         dataStore.edit { prefs ->
             prefs[ACTIVE_EXTENSION_KEY] = extensionId
+        }
+    }
+    
+    suspend fun checkForUpdates() = withContext(Dispatchers.IO) {
+         try {
+             val installedExtensions = extensionDao.getAllExtensions().first()
+             installedExtensions.forEach { extension ->
+                 if (extension.sourceUrl.isNotEmpty()) {
+                     try {
+                         val manifest = fetchManifest(extension.sourceUrl)
+                         if (manifest.version != extension.version) {
+                             android.util.Log.d("ExtensionManager", "Update found for ${extension.name}: ${extension.version} -> ${manifest.version}")
+                             updateExtension(extension, manifest)
+                         }
+                     } catch (e: Exception) {
+                         android.util.Log.e("ExtensionManager", "Failed to check update for ${extension.name}", e)
+                     }
+                 }
+             }
+         } catch (e: Exception) {
+             android.util.Log.e("ExtensionManager", "checkForUpdates error", e)
+         }
+    }
+
+    private suspend fun updateExtension(extension: Extension, manifest: ExtensionManifest) {
+        val modules = downloadModules(extension.sourceUrl, manifest.modules)
+        saveModules(extension.id, modules)
+        
+        val updatedExtension = extension.copy(
+            version = manifest.version,
+            icon = manifest.icon,
+            author = manifest.author,
+            description = manifest.description,
+            updatedAt = System.currentTimeMillis()
+        )
+        
+        extensionDao.update(updatedExtension)
+        
+        // If this was the active extension, update state
+        if (_activeExtension.value?.id == extension.id) {
+            _activeExtension.value = updatedExtension
         }
     }
     

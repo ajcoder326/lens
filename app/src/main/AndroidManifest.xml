@@ -36,6 +36,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity android:name=".ui.CloudflareSolverActivity" 
+                  android:theme="@style/Theme.StreamBox"
+                  android:configChanges="orientation|screenSize|keyboardHidden"/>
+
+        <activity android:name=".ui.VisibleBrowserActivity" 
+                  android:theme="@style/Theme.StreamBox"
+                  android:configChanges="orientation|screenSize|keyboardHidden"/>
         
         <!-- Media Session Service for background playback -->
         <service

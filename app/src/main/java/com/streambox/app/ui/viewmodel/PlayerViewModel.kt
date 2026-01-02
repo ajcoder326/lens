@@ -13,6 +13,7 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.streambox.app.extension.ExtensionManager
 import com.streambox.app.extension.model.StreamSource
 import com.streambox.app.player.HiddenBrowserExtractor
+import com.streambox.app.runtime.JSApis
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
@@ -45,13 +46,16 @@ data class PlayerUiState(
     val bufferedPosition: Long = 0L,
     val availableStreams: List<StreamSource> = emptyList(),
     val showStreamSelection: Boolean = false,
-    val selectedStreamIndex: Int = 0
+    val selectedStreamIndex: Int = 0,
+    val isWebViewMode: Boolean = false,
+    val webViewUrl: String? = null
 )
 
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val extensionManager: ExtensionManager
+    private val extensionManager: ExtensionManager,
+    private val jsApis: JSApis
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(PlayerUiState())
@@ -98,6 +102,30 @@ class PlayerViewModel @Inject constructor(
                             }
                         }
                     }
+                    
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        Log.e(TAG, "ExoPlayer error: ${error.message}", error)
+                        logE("ExoPlayer error: ${error.errorCodeName} - ${error.message}")
+                        
+                        val userMessage = when (error.errorCode) {
+                            androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED,
+                            androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED -> 
+                                "⚠️ Device Not Compatible\n\nThis video uses a codec (HEVC/H.265) that your device cannot decode.\n\nTry selecting a different stream quality."
+                            androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
+                                "⚠️ Access Denied (403)\n\nThe server rejected the request. The link may have expired."
+                            androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+                            androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->
+                                "⚠️ Network Error\n\nCould not connect to server. Check your internet connection."
+                            else -> "Playback error: ${error.errorCodeName}"
+                        }
+                        
+                        _uiState.update { 
+                            it.copy(
+                                isLoading = false,
+                                error = userMessage
+                            )
+                        }
+                    }
                 })
             }
         
@@ -137,6 +165,11 @@ class PlayerViewModel @Inject constructor(
                             Log.d(TAG, "Stream[$index]: server=${s.server}, type=${s.type}, link=${s.link.take(50)}, hasAutomation=${s.automation != null}")
                         }
                         
+                        // Always update available streams so user can switch later
+                        _uiState.update { 
+                            it.copy(availableStreams = streams)
+                        }
+                        
                         if (streams.isEmpty()) {
                             // No streams found, try playing URL directly
                             Log.d(TAG, "No streams, playing URL directly")
@@ -148,7 +181,6 @@ class PlayerViewModel @Inject constructor(
                             _uiState.update { 
                                 it.copy(
                                     isLoading = false,
-                                    availableStreams = streams,
                                     showStreamSelection = true
                                 )
                             }
@@ -181,6 +213,26 @@ class PlayerViewModel @Inject constructor(
         logD("handleStream headers: ${stream.headers}")
         
         when (stream.type) {
+            "webview" -> {
+                // WebView iframe playback
+                logD("Opening WebView for iframe: ${stream.link}")
+                _uiState.update { 
+                    it.copy(
+                        isLoading = false,
+                        isWebViewMode = true, 
+                        webViewUrl = stream.link
+                    ) 
+                }
+            }
+            "browser" -> {
+                logD("Opening Visible Browser for: ${stream.link}")
+                extractWithVisibleBrowser(stream)
+            }
+            "http" -> {
+                // HTTP extraction - fetch page and extract video URL via regex
+                logD("HTTP extraction for: ${stream.link}")
+                extractViaHttp(stream)
+            }
             "automate" -> {
                 // Use hidden browser with automation rules
                 if (stream.automation != null) {
@@ -218,6 +270,109 @@ class PlayerViewModel @Inject constructor(
             }
             
             handleStream(selectedStream)
+        }
+    }
+    
+    fun showStreamSelection() {
+        if (_uiState.value.availableStreams.isNotEmpty()) {
+            _uiState.update { it.copy(showStreamSelection = true) }
+        }
+    }
+    
+    /**
+     * Extract video URL via HTTP request and regex patterns
+     */
+    private fun extractViaHttp(stream: StreamSource) {
+        viewModelScope.launch {
+            _uiState.update { 
+                it.copy(
+                    isLoading = true, 
+                    loadingMessage = "Extracting video link..."
+                ) 
+            }
+            
+            try {
+                // Parse extraction rules from stream
+                val automation = stream.automation?.let { JSONObject(it) }
+                val extraction = automation?.optJSONObject("extraction")
+                
+                if (extraction == null) {
+                    logE("No extraction rules found in stream")
+                    _uiState.update { 
+                        it.copy(
+                            isLoading = false,
+                            error = "Invalid extraction configuration"
+                        )
+                    }
+                    return@launch
+                }
+                
+                val method = extraction.optString("method", "GET")
+                val headersJson = extraction.optJSONObject("headers")
+                val patternsArray = extraction.optJSONArray("patterns")
+                val videoHeadersJson = extraction.optJSONObject("videoHeaders")
+                
+                // Build headers map
+                val headers = mutableMapOf<String, String>()
+                headersJson?.keys()?.forEach { key ->
+                    headers[key] = headersJson.getString(key)
+                }
+                
+                logD("HTTP $method: ${stream.link} with headers: $headers")
+                
+                // Fetch page content
+                val html = if (method == "GET") {
+                    jsApis.httpGet(stream.link, headers)
+                } else {
+                    jsApis.httpPost(stream.link, "", headers)
+                }
+                
+                logD("Fetched HTML (${html.length} chars), trying ${patternsArray?.length() ?: 0} patterns")
+                
+                // Try each regex pattern
+                var videoUrl: String? = null
+                if (patternsArray != null) {
+                    for (i in 0 until patternsArray.length()) {
+                        val pattern = patternsArray.getString(i)
+                        val regex = Regex(pattern)
+                        val match = regex.find(html)
+                        if (match != null && match.groupValues.size > 1) {
+                            videoUrl = match.groupValues[1]
+                            logD("Pattern matched: $pattern")
+                            logD("Extracted URL: ${videoUrl.take(100)}")
+                            break
+                        }
+                    }
+                }
+                
+                if (videoUrl != null) {
+                    // Build video headers
+                    val videoHeaders = mutableMapOf<String, String>()
+                    videoHeadersJson?.keys()?.forEach { key ->
+                        videoHeaders[key] = videoHeadersJson.getString(key)
+                    }
+                    
+                    logD("Playing extracted video with headers: $videoHeaders")
+                    playUrl(videoUrl, videoHeaders.takeIf { it.isNotEmpty() }, isHls = videoUrl.contains(".m3u8"))
+                } else {
+                    logE("No video URL found with any pattern")
+                    _uiState.update { 
+                        it.copy(
+                            isLoading = false,
+                            error = "Failed to extract video URL"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                logE("HTTP extraction failed: ${e.message}")
+                Log.e(TAG, "HTTP extraction error", e)
+                _uiState.update { 
+                    it.copy(
+                        isLoading = false,
+                        error = "Extraction failed: ${e.message}"
+                    )
+                }
+            }
         }
     }
     
@@ -282,12 +437,77 @@ class PlayerViewModel @Inject constructor(
         }
     }
     
+    /**
+     * Open visible browser for manual extraction (e.g. for difficult captchas/overlays)
+     */
+    private fun extractWithVisibleBrowser(stream: StreamSource) {
+        viewModelScope.launch {
+            _uiState.update { 
+                it.copy(
+                    isLoading = true, 
+                    loadingMessage = "Waiting for video in browser..."
+                ) 
+            }
+            
+            try {
+                val requestId = java.util.UUID.randomUUID().toString()
+                val deferred = kotlinx.coroutines.CompletableDeferred<String>()
+                com.streambox.app.utils.BrowserBus.requests[requestId] = deferred
+                
+                val intent = android.content.Intent(context, com.streambox.app.ui.VisibleBrowserActivity::class.java).apply {
+                    putExtra("URL", stream.link)
+                    putExtra("REQUEST_ID", requestId)
+                    if (stream.headers?.containsKey("User-Agent") == true) {
+                        putExtra("USER_AGENT", stream.headers["User-Agent"])
+                    }
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+                
+                // Wait for result
+                val resultJsonStr = deferred.await()
+                com.streambox.app.utils.BrowserBus.requests.remove(requestId)
+                
+                if (resultJsonStr.isNotEmpty()) {
+                    val json = JSONObject(resultJsonStr)
+                    val videoUrl = json.getString("url")
+                    val headersJson = json.optJSONObject("headers")
+                    val headers = mutableMapOf<String, String>()
+                    headersJson?.keys()?.forEach { key ->
+                        headers[key] = headersJson.getString(key)
+                    }
+                    
+                    logD("Browser captured video: $videoUrl")
+                    playUrl(videoUrl, headers)
+                } else {
+                    _uiState.update { 
+                        it.copy(
+                            isLoading = false,
+                            error = "Browser closed without playing"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                logE("Visible browser error: ${e.message}")
+                _uiState.update { 
+                    it.copy(
+                        isLoading = false,
+                        error = "Browser error: ${e.message}"
+                    )
+                }
+            }
+        }
+    }
+
     fun dismissStreamSelection() {
         _uiState.update { it.copy(showStreamSelection = false) }
-        // Play first stream as default
-        val streams = _uiState.value.availableStreams
-        if (streams.isNotEmpty()) {
-            handleStream(streams[0])
+        
+        // Only play default if nothing is loaded yet
+        if (_player?.currentMediaItem == null) {
+            val streams = _uiState.value.availableStreams
+            if (streams.isNotEmpty()) {
+                handleStream(streams[0])
+            }
         }
     }
     
