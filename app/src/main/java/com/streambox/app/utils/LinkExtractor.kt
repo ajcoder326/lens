@@ -38,45 +38,74 @@ object LinkExtractor {
         try {
             val doc: Document = Jsoup.parse(html, baseUrl)
             
-            // 1. Look for quality selection links (highest priority)
+            // SpeedoStream specific: Quality links in #container table
+            val containerTableLinks = doc.select("#container table a, div#container table a")
+            containerTableLinks.forEach { element ->
+                val href = element.absUrl("href")
+                val text = element.text().trim()
+                if (href.isNotEmpty() && !isAdLink(href) && text.isNotEmpty()) {
+                    val type = if (text.lowercase().contains("quality") || href.contains("_x") || href.contains("_h") || href.contains("_l")) {
+                        LinkType.QUALITY
+                    } else LinkType.NAVIGATION
+                    links.add(ExtractedLink(text, href, type))
+                }
+            }
+            
+            // SpeedoStream specific: Direct download link in #container span
+            val directSpanLinks = doc.select("#container span a, div#container span a")
+            directSpanLinks.forEach { element ->
+                val href = element.absUrl("href")
+                val text = element.text().trim()
+                if (href.isNotEmpty() && !isAdLink(href)) {
+                    val type = if (isVideoUrl(href)) LinkType.VIDEO else LinkType.DIRECT_LINK
+                    links.add(ExtractedLink(text.ifEmpty { "Direct Link" }, href, type))
+                }
+            }
+            
+            // SpeedoStream specific: Form with submit button (Download File button)
+            val forms = doc.select("form")
+            forms.forEach { form ->
+                val action = form.absUrl("action").ifEmpty { baseUrl }
+                val submitBtn = form.selectFirst("button[type='submit'], input[type='submit']")
+                if (submitBtn != null) {
+                    val text = submitBtn.text().trim().ifEmpty { 
+                        submitBtn.attr("value").ifEmpty { "Download" }
+                    }
+                    // For form submissions, we mark this specially - the action URL is where to POST
+                    if (text.lowercase().contains("download") || text.lowercase().contains("file")) {
+                        links.add(ExtractedLink(text, action, LinkType.DOWNLOAD))
+                    }
+                }
+            }
+            
+            // General: Quality selection links (fallback)
             val qualityLinks = doc.select("a[href*='_x'], a[href*='_l'], a[href*='_h'], a[href*='quality']")
             qualityLinks.forEach { element ->
                 val href = element.absUrl("href")
                 val text = element.text().ifEmpty { extractQualityFromUrl(href) }
-                if (href.isNotEmpty() && !isAdLink(href)) {
+                if (href.isNotEmpty() && !isAdLink(href) && links.none { it.url == href }) {
                     links.add(ExtractedLink(text, href, LinkType.QUALITY))
                 }
             }
             
-            // 2. Look for download buttons
-            val downloadLinks = doc.select("a:contains(Download), a:contains(download), input[name='imhuman'], button:contains(Download)")
-            downloadLinks.forEach { element ->
-                val href = if (element.tagName() == "a") element.absUrl("href") else ""
-                val text = element.text().ifEmpty { "Download" }
-                if (href.isNotEmpty() && !isAdLink(href)) {
-                    links.add(ExtractedLink(text, href, LinkType.DOWNLOAD))
-                }
-            }
-            
-            // 3. Look for direct file links (mp4, mkv, m3u8)
+            // General: Direct file links (mp4, mkv, m3u8)
             val directLinks = doc.select("a[href*='.mp4'], a[href*='.mkv'], a[href*='.m3u8'], a[href*='ydc1wes']")
             directLinks.forEach { element ->
                 val href = element.absUrl("href")
                 val text = element.text().ifEmpty { "Direct Link" }
-                if (href.isNotEmpty() && !isAdLink(href)) {
+                if (href.isNotEmpty() && !isAdLink(href) && links.none { it.url == href }) {
                     val type = if (isVideoUrl(href)) LinkType.VIDEO else LinkType.DIRECT_LINK
                     links.add(ExtractedLink(text, href, type))
                 }
             }
             
-            // 4. Look for form submit buttons (for imhuman verification)
-            val forms = doc.select("form")
-            forms.forEach { form ->
-                val action = form.absUrl("action")
-                val submitBtn = form.selectFirst("input[type='submit'], button[type='submit']")
-                if (action.isNotEmpty() && submitBtn != null) {
-                    val text = submitBtn.attr("value").ifEmpty { submitBtn.text().ifEmpty { "Continue" } }
-                    links.add(ExtractedLink(text, action, LinkType.NAVIGATION))
+            // General: Any link with "download" text
+            val downloadLinks = doc.select("a:contains(Download), a:contains(download)")
+            downloadLinks.forEach { element ->
+                val href = element.absUrl("href")
+                val text = element.text().trim()
+                if (href.isNotEmpty() && !isAdLink(href) && links.none { it.url == href }) {
+                    links.add(ExtractedLink(text.ifEmpty { "Download" }, href, LinkType.DOWNLOAD))
                 }
             }
             
