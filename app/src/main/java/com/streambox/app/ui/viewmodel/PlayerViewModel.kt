@@ -48,7 +48,12 @@ data class PlayerUiState(
     val showStreamSelection: Boolean = false,
     val selectedStreamIndex: Int = 0,
     val isWebViewMode: Boolean = false,
-    val webViewUrl: String? = null
+    val webViewUrl: String? = null,
+    // Link Navigator State
+    val showLinkNavigator: Boolean = false,
+    val linkNavigatorLinks: List<com.streambox.app.utils.ExtractedLink> = emptyList(),
+    val linkNavigatorCurrentUrl: String? = null,
+    val linkNavigatorLoading: Boolean = false
 )
 
 @HiltViewModel
@@ -227,6 +232,10 @@ class PlayerViewModel @Inject constructor(
             "browser" -> {
                 logD("Opening Visible Browser for: ${stream.link}")
                 extractWithVisibleBrowser(stream)
+            }
+            "navigate" -> {
+                logD("Opening Link Navigator for: ${stream.link}")
+                startLinkNavigator(stream.link, stream.headers)
             }
             "http" -> {
                 // HTTP extraction - fetch page and extract video URL via regex
@@ -496,6 +505,136 @@ class PlayerViewModel @Inject constructor(
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * Start the Link Navigator with an initial URL
+     */
+    private fun startLinkNavigator(url: String, headers: Map<String, String>?) {
+        _uiState.update { 
+            it.copy(
+                isLoading = false,
+                showLinkNavigator = true,
+                linkNavigatorLoading = true,
+                linkNavigatorCurrentUrl = url,
+                linkNavigatorLinks = emptyList()
+            )
+        }
+        
+        viewModelScope.launch {
+            fetchAndExtractLinks(url, headers)
+        }
+    }
+
+    /**
+     * Navigate to a selected link
+     */
+    fun navigateLink(link: com.streambox.app.utils.ExtractedLink) {
+        logD("User selected link: ${link.text} -> ${link.url}")
+        
+        // If it's a video URL, play it directly
+        if (link.type == com.streambox.app.utils.LinkType.VIDEO || 
+            com.streambox.app.utils.LinkExtractor.isVideoUrl(link.url)) {
+            logD("Direct video URL detected, playing: ${link.url}")
+            _uiState.update { it.copy(showLinkNavigator = false) }
+            playUrl(link.url, mapOf(
+                "Referer" to (_uiState.value.linkNavigatorCurrentUrl ?: link.url),
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
+            ))
+            return
+        }
+        
+        // Otherwise, fetch the next page
+        _uiState.update { 
+            it.copy(
+                linkNavigatorLoading = true,
+                linkNavigatorCurrentUrl = link.url,
+                linkNavigatorLinks = emptyList()
+            )
+        }
+        
+        viewModelScope.launch {
+            fetchAndExtractLinks(link.url, null)
+        }
+    }
+
+    /**
+     * Fetch a page and extract links
+     */
+    private suspend fun fetchAndExtractLinks(url: String, headers: Map<String, String>?) {
+        try {
+            logD("Fetching page for link extraction: $url")
+            
+            val client = okhttp3.OkHttpClient.Builder()
+                .followRedirects(true)
+                .cookieJar(jsApis.getCookieJar())
+                .build()
+            
+            val requestBuilder = okhttp3.Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+            
+            headers?.forEach { (key, value) ->
+                requestBuilder.header(key, value)
+            }
+            
+            val response = client.newCall(requestBuilder.build()).execute()
+            val html = response.body?.string() ?: ""
+            
+            logD("Fetched ${html.length} chars from $url")
+            
+            // Check if we got redirected to a video URL
+            val finalUrl = response.request.url.toString()
+            if (com.streambox.app.utils.LinkExtractor.isVideoUrl(finalUrl)) {
+                logD("Redirected to video URL: $finalUrl")
+                _uiState.update { it.copy(showLinkNavigator = false) }
+                playUrl(finalUrl, mapOf("Referer" to url))
+                return
+            }
+            
+            // Extract links from HTML
+            val links = com.streambox.app.utils.LinkExtractor.extractLinks(html, url)
+            logD("Extracted ${links.size} links")
+            
+            // Check if any extracted link is a direct video URL
+            val videoLink = links.find { it.type == com.streambox.app.utils.LinkType.VIDEO }
+            if (videoLink != null) {
+                logD("Found video link in extracted links: ${videoLink.url}")
+                _uiState.update { it.copy(showLinkNavigator = false) }
+                playUrl(videoLink.url, mapOf("Referer" to url))
+                return
+            }
+            
+            _uiState.update { 
+                it.copy(
+                    linkNavigatorLoading = false,
+                    linkNavigatorLinks = links,
+                    linkNavigatorCurrentUrl = finalUrl
+                )
+            }
+            
+        } catch (e: Exception) {
+            logE("Link extraction error: ${e.message}")
+            _uiState.update { 
+                it.copy(
+                    linkNavigatorLoading = false,
+                    error = "Failed to load page: ${e.message}"
+                )
+            }
+        }
+    }
+
+    /**
+     * Dismiss the Link Navigator dialog
+     */
+    fun dismissLinkNavigator() {
+        _uiState.update { 
+            it.copy(
+                showLinkNavigator = false,
+                linkNavigatorLinks = emptyList(),
+                linkNavigatorCurrentUrl = null
+            )
         }
     }
 

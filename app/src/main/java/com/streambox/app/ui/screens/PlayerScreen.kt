@@ -434,6 +434,17 @@ fun PlayerScreen(
                 }
             }
         }
+        
+        // Link Navigator Dialog
+        if (uiState.showLinkNavigator) {
+            com.streambox.app.ui.components.LinkNavigatorDialog(
+                links = uiState.linkNavigatorLinks,
+                currentUrl = uiState.linkNavigatorCurrentUrl,
+                isLoading = uiState.linkNavigatorLoading,
+                onLinkClick = { link -> viewModel.navigateLink(link) },
+                onDismiss = { viewModel.dismissLinkNavigator() }
+            )
+        }
     }
 }
 

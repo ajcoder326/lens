@@ -58,6 +58,36 @@ class JSApis @Inject constructor(
         return prefs.getString(key, "") ?: ""
     }
     
+    /**
+     * Get a CookieJar that shares cookies with JSApis and Browser
+     */
+    fun getCookieJar(): okhttp3.CookieJar {
+        return object : okhttp3.CookieJar {
+            override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<okhttp3.Cookie>) {
+                val domain = url.host
+                val cookieString = cookies.joinToString("; ") { "${it.name}=${it.value}" }
+                if (cookieString.isNotEmpty()) {
+                    cookieStore[domain] = cookieString
+                }
+            }
+            
+            override fun loadForRequest(url: okhttp3.HttpUrl): List<okhttp3.Cookie> {
+                val domain = url.host
+                val stored = cookieStore[domain] ?: return emptyList()
+                return stored.split("; ").mapNotNull { cookie ->
+                    val parts = cookie.split("=", limit = 2)
+                    if (parts.size == 2) {
+                        okhttp3.Cookie.Builder()
+                            .domain(domain)
+                            .name(parts[0])
+                            .value(parts[1])
+                            .build()
+                    } else null
+                }
+            }
+        }
+    }
+    
     // ============ Browser APIs ============
     
     suspend fun browserGet(url: String): String {
