@@ -30,7 +30,8 @@ class VisibleBrowserActivity : ComponentActivity() {
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
-            settings.javaScriptCanOpenWindowsAutomatically = true
+            settings.javaScriptCanOpenWindowsAutomatically = false // Block automated popups
+            settings.setSupportMultipleWindows(true) // Required to intercept popups via onCreateWindow
             
             // Viewport settings for proper mobile display
             settings.useWideViewPort = true
@@ -53,11 +54,28 @@ class VisibleBrowserActivity : ComponentActivity() {
                     request: WebResourceRequest?
                 ): WebResourceResponse? {
                     val reqUrl = request?.url?.toString() ?: return null
+                    
+                    // Ad Block Check
+                    if (com.streambox.app.utils.AdBlocker.isAd(reqUrl)) {
+                         return com.streambox.app.utils.AdBlocker.createEmptyResponse()
+                    }
+                    
                     checkUrlForVideo(reqUrl)
                     return super.shouldInterceptRequest(view, request)
                 }
             }
-            webChromeClient = WebChromeClient()
+            
+            webChromeClient = object : WebChromeClient() {
+                override fun onCreateWindow(
+                    view: WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: android.os.Message?
+                ): Boolean {
+                    // Block all popups
+                    return false
+                }
+            }
         }
         root.addView(webView)
         
