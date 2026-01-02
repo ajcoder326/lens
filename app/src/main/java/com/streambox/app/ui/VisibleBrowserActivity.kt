@@ -69,6 +69,20 @@ class VisibleBrowserActivity : ComponentActivity() {
                 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    // Inject viewport meta tag to force mobile layout
+                    val viewportJs = """
+                        (function() {
+                            var viewport = document.querySelector('meta[name="viewport"]');
+                            if (!viewport) {
+                                viewport = document.createElement('meta');
+                                viewport.name = 'viewport';
+                                document.head.appendChild(viewport);
+                            }
+                            viewport.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+                            console.log('StreamBox: Viewport forced to mobile');
+                        })();
+                    """.trimIndent()
+                    view?.evaluateJavascript(viewportJs, null)
                     injectCosmeticJs(view)
                 }
             }
