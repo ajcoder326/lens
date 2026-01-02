@@ -31,6 +31,16 @@ class VisibleBrowserActivity : ComponentActivity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.javaScriptCanOpenWindowsAutomatically = true
+            
+            // Viewport settings for proper mobile display
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = true
+            
+            // Zoom controls
+            settings.setSupportZoom(true)
+            settings.builtInZoomControls = true
+            settings.displayZoomControls = false
+            
             if (userAgent != null) {
                 settings.userAgentString = userAgent
             } else {
