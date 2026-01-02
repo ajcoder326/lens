@@ -80,11 +80,12 @@ data class Episode(
 data class StreamSource(
     val server: String,
     val link: String,
-    val type: String, // "m3u8", "mp4", "mkv", "automate", "direct"
+    val type: String, // "m3u8", "mp4", "mkv", "automate", "direct", "navigate"
     val quality: String? = null,
     val subtitles: List<Subtitle>? = null,
     val headers: Map<String, String>? = null,
-    val automation: String? = null  // JSON string of automation rules for hidden browser
+    val automation: String? = null,  // JSON string of automation rules for hidden browser
+    val navigation: String? = null   // JSON string of navigation rules for link navigator
 )
 
 /**

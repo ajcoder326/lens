@@ -53,7 +53,9 @@ data class PlayerUiState(
     val showLinkNavigator: Boolean = false,
     val linkNavigatorLinks: List<com.streambox.app.utils.ExtractedLink> = emptyList(),
     val linkNavigatorCurrentUrl: String? = null,
-    val linkNavigatorLoading: Boolean = false
+    val linkNavigatorLoading: Boolean = false,
+    val linkNavigatorRules: com.streambox.app.utils.LinkExtractor.NavigationRules = 
+        com.streambox.app.utils.LinkExtractor.NavigationRules()
 )
 
 @HiltViewModel
@@ -235,7 +237,9 @@ class PlayerViewModel @Inject constructor(
             }
             "navigate" -> {
                 logD("Opening Link Navigator for: ${stream.link}")
-                startLinkNavigator(stream.link, stream.headers)
+                val rules = com.streambox.app.utils.LinkExtractor.parseNavigationRules(stream.navigation)
+                logD("Parsed ${rules.selectors.size} selector rules from extension")
+                startLinkNavigator(stream.link, stream.headers, rules)
             }
             "http" -> {
                 // HTTP extraction - fetch page and extract video URL via regex
@@ -511,14 +515,19 @@ class PlayerViewModel @Inject constructor(
     /**
      * Start the Link Navigator with an initial URL
      */
-    private fun startLinkNavigator(url: String, headers: Map<String, String>?) {
+    private fun startLinkNavigator(
+        url: String, 
+        headers: Map<String, String>?,
+        rules: com.streambox.app.utils.LinkExtractor.NavigationRules = com.streambox.app.utils.LinkExtractor.NavigationRules()
+    ) {
         _uiState.update { 
             it.copy(
                 isLoading = false,
                 showLinkNavigator = true,
                 linkNavigatorLoading = true,
                 linkNavigatorCurrentUrl = url,
-                linkNavigatorLinks = emptyList()
+                linkNavigatorLinks = emptyList(),
+                linkNavigatorRules = rules
             )
         }
         
@@ -593,9 +602,10 @@ class PlayerViewModel @Inject constructor(
                 return
             }
             
-            // Extract links from HTML
-            val links = com.streambox.app.utils.LinkExtractor.extractLinks(html, url)
-            logD("Extracted ${links.size} links")
+            // Extract links from HTML using extension-provided rules
+            val rules = _uiState.value.linkNavigatorRules
+            val links = com.streambox.app.utils.LinkExtractor.extractLinks(html, url, rules)
+            logD("Extracted ${links.size} links using ${rules.selectors.size} extension rules")
             
             // Check if any extracted link is a direct video URL
             val videoLink = links.find { it.type == com.streambox.app.utils.LinkType.VIDEO }

@@ -22,90 +22,124 @@ enum class LinkType {
 
 /**
  * Utility to extract actionable links from HTML pages
- * Used by Native Link Navigator to replace WebView navigation
+ * Supports extension-provided selectors via NavigationRules
  */
 object LinkExtractor {
 
     /**
-     * Extract links from HTML content
-     * @param html The HTML content to parse
-     * @param baseUrl The base URL for resolving relative links
-     * @return List of extracted links, ordered by relevance
+     * Navigation rules provided by extension
      */
-    fun extractLinks(html: String, baseUrl: String): List<ExtractedLink> {
+    data class NavigationRules(
+        val selectors: List<SelectorRule> = emptyList(),
+        val videoPattern: String = ""
+    )
+    
+    data class SelectorRule(
+        val type: String,      // "quality", "download", "direct", "video"
+        val selector: String,  // CSS selector
+        val pattern: String    // Regex pattern for text/href matching
+    )
+
+    /**
+     * Parse navigation rules from JSON string provided by extension
+     */
+    fun parseNavigationRules(json: String?): NavigationRules {
+        if (json.isNullOrEmpty()) return NavigationRules()
+        
+        try {
+            val obj = org.json.JSONObject(json)
+            val selectors = mutableListOf<SelectorRule>()
+            
+            val selectorsArray = obj.optJSONArray("selectors")
+            if (selectorsArray != null) {
+                for (i in 0 until selectorsArray.length()) {
+                    val s = selectorsArray.getJSONObject(i)
+                    selectors.add(SelectorRule(
+                        type = s.optString("type", "navigation"),
+                        selector = s.optString("selector", ""),
+                        pattern = s.optString("pattern", "")
+                    ))
+                }
+            }
+            
+            return NavigationRules(
+                selectors = selectors,
+                videoPattern = obj.optString("videoPattern", "")
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return NavigationRules()
+        }
+    }
+
+    /**
+     * Extract links from HTML content using extension-provided rules
+     */
+    fun extractLinks(html: String, baseUrl: String, rules: NavigationRules = NavigationRules()): List<ExtractedLink> {
         val links = mutableListOf<ExtractedLink>()
         
         try {
             val doc: Document = Jsoup.parse(html, baseUrl)
             
-            // SpeedoStream specific: Quality links in #container table
-            val containerTableLinks = doc.select("#container table a, div#container table a")
-            containerTableLinks.forEach { element ->
-                val href = element.absUrl("href")
-                val text = element.text().trim()
-                if (href.isNotEmpty() && !isAdLink(href) && text.isNotEmpty()) {
-                    val type = if (text.lowercase().contains("quality") || href.contains("_x") || href.contains("_h") || href.contains("_l")) {
-                        LinkType.QUALITY
-                    } else LinkType.NAVIGATION
-                    links.add(ExtractedLink(text, href, type))
-                }
-            }
-            
-            // SpeedoStream specific: Direct download link in #container span
-            val directSpanLinks = doc.select("#container span a, div#container span a")
-            directSpanLinks.forEach { element ->
-                val href = element.absUrl("href")
-                val text = element.text().trim()
-                if (href.isNotEmpty() && !isAdLink(href)) {
-                    val type = if (isVideoUrl(href)) LinkType.VIDEO else LinkType.DIRECT_LINK
-                    links.add(ExtractedLink(text.ifEmpty { "Direct Link" }, href, type))
-                }
-            }
-            
-            // SpeedoStream specific: Form with submit button (Download File button)
-            val forms = doc.select("form")
-            forms.forEach { form ->
-                val action = form.absUrl("action").ifEmpty { baseUrl }
-                val submitBtn = form.selectFirst("button[type='submit'], input[type='submit']")
-                if (submitBtn != null) {
-                    val text = submitBtn.text().trim().ifEmpty { 
-                        submitBtn.attr("value").ifEmpty { "Download" }
-                    }
-                    // For form submissions, we mark this specially - the action URL is where to POST
-                    if (text.lowercase().contains("download") || text.lowercase().contains("file")) {
-                        links.add(ExtractedLink(text, action, LinkType.DOWNLOAD))
+            // Use extension-provided rules if available
+            if (rules.selectors.isNotEmpty()) {
+                for (rule in rules.selectors) {
+                    val elements = doc.select(rule.selector)
+                    elements.forEach { element ->
+                        val href = element.absUrl("href")
+                        val text = element.text().trim()
+                        
+                        // Check if element matches pattern (if pattern provided)
+                        val matchesPattern = rule.pattern.isEmpty() || 
+                            (text + href).lowercase().contains(Regex(rule.pattern.lowercase()))
+                        
+                        if (href.isNotEmpty() && !isAdLink(href) && matchesPattern) {
+                            val linkType = when (rule.type) {
+                                "quality" -> LinkType.QUALITY
+                                "download" -> LinkType.DOWNLOAD
+                                "direct" -> LinkType.DIRECT_LINK
+                                "video" -> LinkType.VIDEO
+                                else -> LinkType.NAVIGATION
+                            }
+                            
+                            // Auto-detect video URLs
+                            val finalType = if (isVideoUrl(href, rules.videoPattern)) LinkType.VIDEO else linkType
+                            links.add(ExtractedLink(text.ifEmpty { rule.type.replaceFirstChar { it.uppercase() } }, href, finalType))
+                        }
                     }
                 }
             }
             
-            // General: Quality selection links (fallback)
-            val qualityLinks = doc.select("a[href*='_x'], a[href*='_l'], a[href*='_h'], a[href*='quality']")
-            qualityLinks.forEach { element ->
-                val href = element.absUrl("href")
-                val text = element.text().ifEmpty { extractQualityFromUrl(href) }
-                if (href.isNotEmpty() && !isAdLink(href) && links.none { it.url == href }) {
-                    links.add(ExtractedLink(text, href, LinkType.QUALITY))
+            // Fallback: Use generic selectors if no rules provided or no links found
+            if (links.isEmpty()) {
+                // SpeedoStream fallback selectors
+                val fallbackSelectors = listOf(
+                    "#container table a" to LinkType.QUALITY,
+                    "#container span a" to LinkType.DIRECT_LINK,
+                    "a[href*='.mp4'], a[href*='.mkv'], a[href*='.m3u8']" to LinkType.VIDEO
+                )
+                
+                for ((selector, type) in fallbackSelectors) {
+                    doc.select(selector).forEach { element ->
+                        val href = element.absUrl("href")
+                        val text = element.text().trim()
+                        if (href.isNotEmpty() && !isAdLink(href) && links.none { it.url == href }) {
+                            val finalType = if (isVideoUrl(href, rules.videoPattern)) LinkType.VIDEO else type
+                            links.add(ExtractedLink(text.ifEmpty { "Link" }, href, finalType))
+                        }
+                    }
                 }
-            }
-            
-            // General: Direct file links (mp4, mkv, m3u8)
-            val directLinks = doc.select("a[href*='.mp4'], a[href*='.mkv'], a[href*='.m3u8'], a[href*='ydc1wes']")
-            directLinks.forEach { element ->
-                val href = element.absUrl("href")
-                val text = element.text().ifEmpty { "Direct Link" }
-                if (href.isNotEmpty() && !isAdLink(href) && links.none { it.url == href }) {
-                    val type = if (isVideoUrl(href)) LinkType.VIDEO else LinkType.DIRECT_LINK
-                    links.add(ExtractedLink(text, href, type))
-                }
-            }
-            
-            // General: Any link with "download" text
-            val downloadLinks = doc.select("a:contains(Download), a:contains(download)")
-            downloadLinks.forEach { element ->
-                val href = element.absUrl("href")
-                val text = element.text().trim()
-                if (href.isNotEmpty() && !isAdLink(href) && links.none { it.url == href }) {
-                    links.add(ExtractedLink(text.ifEmpty { "Download" }, href, LinkType.DOWNLOAD))
+                
+                // Check for form submit buttons
+                doc.select("form").forEach { form ->
+                    val action = form.absUrl("action").ifEmpty { baseUrl }
+                    val submitBtn = form.selectFirst("button[type='submit'], input[type='submit']")
+                    if (submitBtn != null) {
+                        val text = submitBtn.text().trim().ifEmpty { submitBtn.attr("value").ifEmpty { "Submit" } }
+                        if (text.lowercase().contains("download") || text.lowercase().contains("file")) {
+                            links.add(ExtractedLink(text, action, LinkType.DOWNLOAD))
+                        }
+                    }
                 }
             }
             
@@ -119,22 +153,13 @@ object LinkExtractor {
     /**
      * Check if a URL is a video file URL
      */
-    fun isVideoUrl(url: String): Boolean {
+    fun isVideoUrl(url: String, customPattern: String = ""): Boolean {
         val lower = url.lowercase()
-        return (lower.contains(".m3u8") || lower.contains(".mp4") || lower.contains(".mkv")) &&
+        val defaultPattern = "\\.m3u8|\\.mp4|\\.mkv"
+        val pattern = if (customPattern.isNotEmpty()) "$defaultPattern|$customPattern" else defaultPattern
+        
+        return lower.contains(Regex(pattern)) &&
                !lower.contains("thumb") && !lower.contains("preview") && !lower.contains("poster")
-    }
-
-    /**
-     * Extract quality info from URL
-     */
-    private fun extractQualityFromUrl(url: String): String {
-        return when {
-            url.contains("_x") || url.contains("uhd") || url.contains("1080") -> "UHD (1080p)"
-            url.contains("_h") || url.contains("720") -> "HD (720p)"
-            url.contains("_l") || url.contains("480") -> "SD (480p)"
-            else -> "Quality Option"
-        }
     }
 
     /**
