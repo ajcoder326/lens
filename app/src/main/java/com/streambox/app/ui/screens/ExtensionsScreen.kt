@@ -23,6 +23,7 @@ fun ExtensionsScreen(
     onNavigateBack: () -> Unit
 ) {
     val extensions by viewModel.extensions.collectAsState()
+    val activeExt by viewModel.activeExtension.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
@@ -146,6 +147,7 @@ fun ExtensionsScreen(
                     items(extensions, key = { it.id }) { extension ->
                         ExtensionItem(
                             extension = extension,
+                            isActive = activeExt?.id == extension.id,
                             onToggle = { viewModel.toggleExtension(extension.id) },
                             onDelete = { viewModel.removeExtension(extension.id) },
                             onSetActive = { viewModel.setActiveExtension(extension.id) }
@@ -171,6 +173,7 @@ fun ExtensionsScreen(
 @Composable
 fun ExtensionItem(
     extension: Extension,
+    isActive: Boolean = false,
     onToggle: () -> Unit,
     onDelete: () -> Unit,
     onSetActive: () -> Unit
@@ -180,8 +183,14 @@ fun ExtensionItem(
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
+            containerColor = if (isActive) 
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            else 
+                MaterialTheme.colorScheme.surfaceVariant
+        ),
+        border = if (isActive) 
+            androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        else null
     ) {
         Row(
             modifier = Modifier
@@ -193,7 +202,10 @@ fun ExtensionItem(
             Surface(
                 modifier = Modifier.size(48.dp),
                 shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                color = if (isActive)
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                else
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
@@ -207,10 +219,26 @@ fun ExtensionItem(
             Spacer(modifier = Modifier.width(16.dp))
             
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = extension.name,
-                    style = MaterialTheme.typography.titleMedium
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = extension.name,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    if (isActive) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.primary
+                        ) {
+                            Text(
+                                text = "ACTIVE",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
                 Text(
                     text = "v${extension.version}",
                     style = MaterialTheme.typography.bodySmall,
@@ -241,14 +269,19 @@ fun ExtensionItem(
                     onDismissRequest = { showMenu = false }
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Set as active") },
+                        text = { Text(if (isActive) "Currently Active" else "Set as active") },
                         onClick = {
-                            onSetActive()
+                            if (!isActive) onSetActive()
                             showMenu = false
                         },
                         leadingIcon = {
-                            Icon(Icons.Default.Check, contentDescription = null)
-                        }
+                            Icon(
+                                if (isActive) Icons.Default.CheckCircle else Icons.Default.Check, 
+                                contentDescription = null,
+                                tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        enabled = !isActive
                     )
                     DropdownMenuItem(
                         text = { Text("Remove") },

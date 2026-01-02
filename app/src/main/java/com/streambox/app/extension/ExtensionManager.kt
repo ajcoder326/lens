@@ -142,7 +142,25 @@ class ExtensionManager @Inject constructor(
     
     suspend fun toggleExtension(extensionId: String) = withContext(Dispatchers.IO) {
         val extension = extensionDao.getById(extensionId) ?: return@withContext
-        extensionDao.setEnabled(extensionId, !extension.enabled)
+        val newEnabled = !extension.enabled
+        extensionDao.setEnabled(extensionId, newEnabled)
+        
+        // If we're disabling the active extension, switch to another enabled one
+        if (!newEnabled && _activeExtension.value?.id == extensionId) {
+            val nextActive = extensionDao.getAllExtensions().first()
+                .firstOrNull { it.enabled && it.id != extensionId }
+            if (nextActive != null) {
+                setActiveExtension(nextActive.id)
+            } else {
+                _activeExtension.value = null
+                dataStore.edit { it.remove(ACTIVE_EXTENSION_KEY) }
+            }
+        }
+        
+        // If we're enabling an extension and no active one exists, make it active
+        if (newEnabled && _activeExtension.value == null) {
+            setActiveExtension(extensionId)
+        }
     }
     
     suspend fun setActiveExtension(extensionId: String) = withContext(Dispatchers.IO) {

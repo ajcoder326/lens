@@ -72,4 +72,7 @@ class ExtensionsViewModel @Inject constructor(
             }
         }
     }
+    
+    // Expose active extension for UI
+    val activeExtension: StateFlow<Extension?> = extensionManager.activeExtension
 }
