@@ -37,10 +37,8 @@ class VisibleBrowserActivity : ComponentActivity() {
             settings.setSupportMultipleWindows(true) // Required to intercept popups via onCreateWindow
             
             // Viewport settings - adjusted for mobile view
-            // useWideViewPort = true allows viewport meta tags to work
-            // loadWithOverviewMode = false prevent zooming out too much (fixes "small" view)
             settings.useWideViewPort = true
-            settings.loadWithOverviewMode = true // Re-enable to ensure it fits if viewport tag is missing
+            settings.loadWithOverviewMode = false // Correct setting for mobile view (prevents desktop zoom-out)
             
             // Zoom controls
             settings.setSupportZoom(true)
@@ -50,7 +48,7 @@ class VisibleBrowserActivity : ComponentActivity() {
             // FORCE Mobile User Agent to ensure mobile site is loaded
             val mobileUserAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
             settings.userAgentString = mobileUserAgent
-            android.util.Log.d("BrowserMode", "Forced User-Agent: $mobileUserAgent")
+            com.streambox.app.utils.DebugLogManager.d("BrowserMode", "Forced User-Agent: $mobileUserAgent")
             
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
@@ -61,7 +59,7 @@ class VisibleBrowserActivity : ComponentActivity() {
                     
                     // Ad Block Check
                     if (com.streambox.app.utils.AdBlocker.isAd(reqUrl)) {
-                         android.util.Log.d("BrowserMode", "BLOCKED AD: $reqUrl")
+                         com.streambox.app.utils.DebugLogManager.d("BrowserMode", "BLOCKED AD: $reqUrl")
                          return com.streambox.app.utils.AdBlocker.createEmptyResponse()
                     }
                     
@@ -108,7 +106,7 @@ class VisibleBrowserActivity : ComponentActivity() {
         
         setContentView(root)
         
-        Toast.makeText(this, "Browser Mode: Play video to capture", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Browser Mode: AdBlocker Active", Toast.LENGTH_LONG).show()
         
         webView.loadUrl(url)
     }
