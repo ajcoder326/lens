@@ -100,6 +100,9 @@ dependencies {
     // Image Loading
     implementation("io.coil-kt:coil-compose:2.5.0")
     
+    // Accompanist - Pull to Refresh
+    implementation("com.google.accompanist:accompanist-swiperefresh:0.32.0")
+    
     // Room Database
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")

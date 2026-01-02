@@ -15,6 +15,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.google.accompanist.swiperefresh.SwipeRefresh
+import com.google.accompanist.swiperefresh.SwipeRefreshIndicator
+import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 import com.streambox.app.ui.components.ContentSlider
 import com.streambox.app.ui.components.HeroSection
 import com.streambox.app.ui.theme.Background
@@ -32,6 +35,9 @@ fun HomeScreen(
     val uiState by viewModel.uiState.collectAsState()
     val activeExtension by viewModel.activeExtension.collectAsState()
     val heroPost by viewModel.heroPost.collectAsState()
+    
+    // Pull-to-refresh state using Accompanist
+    val swipeRefreshState = rememberSwipeRefreshState(isRefreshing = uiState.isLoading)
     
     Box(
         modifier = Modifier
@@ -57,41 +63,54 @@ fun HomeScreen(
                 )
             }
             else -> {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    item {
-                        HeroSection(
-                            post = heroPost,
-                            metadata = null,
-                            isLoading = uiState.isLoadingHero,
-                            onPlayClick = {
-                                heroPost?.let { post ->
-                                    onNavigateToInfo(post.link, activeExtension?.id)
-                                }
-                            },
-                            onInfoClick = {
-                                heroPost?.let { post ->
-                                    onNavigateToInfo(post.link, activeExtension?.id)
-                                }
-                            }
+                SwipeRefresh(
+                    state = swipeRefreshState,
+                    onRefresh = { viewModel.refresh() },
+                    indicator = { state, trigger ->
+                        SwipeRefreshIndicator(
+                            state = state,
+                            refreshTriggerDistance = trigger,
+                            backgroundColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     }
-                    
-                    items(uiState.catalogs.size) { index ->
-                        val catalog = uiState.catalogs[index]
-                        val posts = uiState.catalogPosts[catalog.filter] ?: emptyList()
+                ) {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        item {
+                            HeroSection(
+                                post = heroPost,
+                                metadata = null,
+                                isLoading = uiState.isLoadingHero,
+                                onPlayClick = {
+                                    heroPost?.let { post ->
+                                        onNavigateToInfo(post.link, activeExtension?.id)
+                                    }
+                                },
+                                onInfoClick = {
+                                    heroPost?.let { post ->
+                                        onNavigateToInfo(post.link, activeExtension?.id)
+                                    }
+                                }
+                            )
+                        }
                         
-                        ContentSlider(
-                            title = catalog.title,
-                            posts = posts,
-                            isLoading = posts.isEmpty() && uiState.isLoading,
-                            onPostClick = { post ->
-                                onNavigateToInfo(post.link, activeExtension?.id)
-                            },
-                            onMoreClick = { }
-                        )
+                        items(uiState.catalogs.size) { index ->
+                            val catalog = uiState.catalogs[index]
+                            val posts = uiState.catalogPosts[catalog.filter] ?: emptyList()
+                            
+                            ContentSlider(
+                                title = catalog.title,
+                                posts = posts,
+                                isLoading = posts.isEmpty() && uiState.isLoading,
+                                onPostClick = { post ->
+                                    onNavigateToInfo(post.link, activeExtension?.id)
+                                },
+                                onMoreClick = { }
+                            )
+                        }
+                        
+                        item { Spacer(modifier = Modifier.height(80.dp)) }
                     }
-                    
-                    item { Spacer(modifier = Modifier.height(80.dp)) }
                 }
             }
         }
